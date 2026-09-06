@@ -1,8 +1,8 @@
 diff --git a/apps/dashboard/src/app/layout.tsx b/apps/dashboard/src/app/layout.tsx
-index 0c05de8a..79451104 100644
+index 0c05de8a..efd860a8 100644
 --- a/apps/dashboard/src/app/layout.tsx
 +++ b/apps/dashboard/src/app/layout.tsx
-@@ -58,9 +58,7 @@ const BASE_METADATA: Metadata = {
+@@ -58,17 +58,11 @@ const BASE_METADATA: Metadata = {
    description: "Manage your deployments, domains, and infrastructure.",
    icons: {
      icon: [
@@ -13,6 +13,14 @@ index 0c05de8a..79451104 100644
      ],
      apple: [
        { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+     ],
+-    other: [
+-      { url: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
+-      { url: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
+-    ],
+   },
+   manifest: '/site.webmanifest',
+ };
 diff --git a/apps/dashboard/src/components/logo.tsx b/apps/dashboard/src/components/logo.tsx
 index 0c42b4e6..115c4264 100644
 --- a/apps/dashboard/src/components/logo.tsx
