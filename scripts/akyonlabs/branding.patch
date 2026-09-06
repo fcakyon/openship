@@ -1,3 +1,18 @@
+diff --git a/apps/dashboard/src/app/layout.tsx b/apps/dashboard/src/app/layout.tsx
+index 0c05de8a..79451104 100644
+--- a/apps/dashboard/src/app/layout.tsx
++++ b/apps/dashboard/src/app/layout.tsx
+@@ -58,9 +58,7 @@ const BASE_METADATA: Metadata = {
+   description: "Manage your deployments, domains, and infrastructure.",
+   icons: {
+     icon: [
+-      { url: '/favicon.ico' },
+-      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+-      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
++      { url: '/akyonlabs-favicon.svg', type: 'image/svg+xml' },
+     ],
+     apple: [
+       { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
 diff --git a/apps/dashboard/src/components/logo.tsx b/apps/dashboard/src/components/logo.tsx
 index 0c42b4e6..115c4264 100644
 --- a/apps/dashboard/src/components/logo.tsx
@@ -38,3 +53,10 @@ index c87c0310..1db775a0 100644
  }
  
  export type ResolveProductViewInput = {
+diff --git a/apps/dashboard/public/akyonlabs-favicon.svg b/apps/dashboard/public/akyonlabs-favicon.svg
+new file mode 100644
+index 00000000..547c97e0
+--- /dev/null
++++ b/apps/dashboard/public/akyonlabs-favicon.svg
+@@ -0,0 +1 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#101113"/><g transform="translate(6 13) scale(.18)" fill="#f4f4f5"><path d="M8 198 103 12h44L49 198Z M158 12h8v186h-38v-38H83l19-38h26V71Z M184 12h39v186h-39Z M235 161h51v37h-51Z"/></g></svg>
