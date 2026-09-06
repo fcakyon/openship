@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+export PATH="/root/.openship/bin:/root/.openship/runtime/current/bin:$PATH"
+state=/root/.openship/akyonlabs
+compose=/root/.openship/compose
+mkdir -p "$state"
+exec 9>"$state/update.lock"
+flock -n 9 || { echo 'Another update is running.' >&2; exit 1; }
+version=$(openship --json update --check | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).latest')
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+work=$(mktemp -d "$state/build.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+printf 'Preparing Akyon Labs / OpenShip %s\n' "$version"
+curl -fLsS --retry 3 "https://api.github.com/repos/oblien/openship/tarball/v$version" -o "$work/source.tar.gz"
+mkdir "$work/source"
+tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
+cd "$work/source"
+git apply "$state/branding.patch"
+patch_id=$(sha256sum "$state/branding.patch" | cut -c1-12)
+image="akyonlabs/openship-dashboard:$version-$patch_id"
+docker build -f apps/dashboard/Dockerfile -t "$image" .
+# Check the built dashboard before changing the running stack.
+probe="akyon-brand-check-$$"
+docker run -d --name "$probe" --network openship_default -e HOSTNAME=0.0.0.0 -e PORT=3001 -e INTERNAL_API_URL=http://api:4000 "$image" >/dev/null
+trap 'docker rm -f "$probe" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+for attempt in {1..30}; do
+  if docker exec "$probe" node -e 'fetch("http://localhost:3001/login",{signal:AbortSignal.timeout(10000)}).then(async r=>{if(!r.ok || !(await r.text()).includes("<title>Akyon Labs</title>"))process.exit(1)}).catch(()=>process.exit(1))'; then break; fi
+  [[ "$attempt" != 30 ]] || exit 1
+  sleep 2
+done
+docker rm -f "$probe" >/dev/null
+backup="$state/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$backup"
+cp "$compose/.env" "$compose/docker-compose.yml" "$backup/"
+if [[ -f "$state/dashboard.yml" ]]; then cp "$state/dashboard.yml" "$backup/"; fi
+docker inspect openship-dashboard-1 --format '{{.Config.Image}}' > "$backup/dashboard-image"
+# A database backup accompanies every upgrade; image rollback alone cannot undo migrations.
+docker exec openship-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup/database.sql.gz"
+openship update
+actual=$(openship --version)
+[[ "$actual" == *"$version"* ]] || { echo "Release changed during build; rerun this command. Backup: $backup" >&2; exit 1; }
+printf 'services:\n  dashboard:\n    image: %s\n    pull_policy: never\n' "$image" > "$state/dashboard.yml"
+cd "$compose"
+docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --no-deps dashboard
+for attempt in {1..30}; do
+  if curl --max-time 15 -fsS https://app.akyonlabs.com/login | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.exit(s.includes("<title>Akyon Labs</title>")?0:1))'; then
+    printf 'Akyon Labs %s is live. Backup: %s\n' "$version" "$backup"
+    exit 0
+  fi
+  sleep 2
+done
+echo "Dashboard health check failed. Backup: $backup" >&2
+exit 1
