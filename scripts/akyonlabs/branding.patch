@@ -59,7 +59,7 @@ index c87c0310..1db775a0 100644
 +export function brandNameFor(_brand: string, view: ProductView): string {
 +  return view === "mail" ? "Akyon Labs Mail" : "Akyon Labs";
  }
- 
+
  export type ResolveProductViewInput = {
 diff --git a/apps/dashboard/public/akyonlabs-favicon.svg b/apps/dashboard/public/akyonlabs-favicon.svg
 new file mode 100644
@@ -91,3 +91,119 @@ index 75468ebd..ada0c30e 100644
        initialUser={session.user}
        selfHosted={deploymentInfo.selfHosted}
        deployMode={deploymentInfo.deployMode}
+diff --git a/apps/dashboard/src/app/(dashboard)/providers.tsx b/apps/dashboard/src/app/(dashboard)/providers.tsx
+index 9e2953f7..00c98f95 100644
+--- a/apps/dashboard/src/app/(dashboard)/providers.tsx
++++ b/apps/dashboard/src/app/(dashboard)/providers.tsx
+@@ -25,12 +25,10 @@ interface DashboardProvidersProps {
+   machineName?: string;
+   hostDomain?: string;
+   initialUser?: AuthUser | null;
+-  initialGithubData?: any;
+ }
+
+ export function DashboardProviders({
+   children,
+-  initialGithubData,
+   initialUser,
+   selfHosted,
+   deployMode,
+@@ -61,7 +59,7 @@ export function DashboardProviders({
+         machineName={machineName}
+         hostDomain={hostDomain}
+       >
+-        <GitHubProvider initialData={initialGithubData}>
++        <GitHubProvider>
+           <CloudProvider>
+             {/* Mounted only in mail view: it fetches the mail-server registry on
+                 every page, and that call SSH-scans when the registry is empty
+diff --git a/apps/dashboard/src/app/not-found.tsx b/apps/dashboard/src/app/not-found.tsx
+index 4a79d9b4..9596b2cc 100644
+--- a/apps/dashboard/src/app/not-found.tsx
++++ b/apps/dashboard/src/app/not-found.tsx
+@@ -1,5 +1,4 @@
+ import { getSession, getDeploymentInfo } from "@/lib/server/session";
+-import { serverApi } from "@/lib/server/api";
+ import { AuthShell } from "@/components/auth-shell";
+ import { Sidebar } from "@/components/sidebar";
+ import { NotFoundContent } from "@/components/not-found-content";
+@@ -28,13 +27,8 @@ export default async function NotFound() {
+     return <AuthShell maxWidth="max-w-[520px]">{body}</AuthShell>;
+   }
+
+-  const initialGithubData = await serverApi
+-    .get("github/home", { cache: "no-store" })
+-    .catch(() => null);
+-
+   return (
+     <DashboardProviders
+-      initialGithubData={initialGithubData}
+       initialUser={session.user}
+       selfHosted={deploymentInfo.selfHosted}
+       deployMode={deploymentInfo.deployMode}
+diff --git a/apps/dashboard/src/context/GitHubContext.tsx b/apps/dashboard/src/context/GitHubContext.tsx
+index 88a77d71..a000aa43 100644
+--- a/apps/dashboard/src/context/GitHubContext.tsx
++++ b/apps/dashboard/src/context/GitHubContext.tsx
+@@ -181,7 +181,6 @@ export function useGitHub() {
+
+ interface GitHubProviderProps {
+   children: React.ReactNode;
+-  initialData?: any;
+ }
+
+ const EMPTY_STATE: GitHubConnectionState = {
+@@ -197,30 +196,24 @@ const EMPTY_STATE: GitHubConnectionState = {
+ // never leave every GitHub connect button disabled forever.
+ const GITHUB_REDIRECT_TIMEOUT_MS = 10 * 60 * 1000;
+
+-export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
++export function GitHubProvider({ children }: GitHubProviderProps) {
+   // Note: setSelfHosted is no longer driven from this context — the
+   // global platform mode is owned by PlatformContext and read from
+   // env.CLOUD_MODE during the initial dashboard layout. We deliberately
+   // don't shadow it here.
+   const { showToast } = useToast();
+-  const [state, setState] = useState<GitHubConnectionState>(initialData?.state ?? EMPTY_STATE);
++  const [state, setState] = useState<GitHubConnectionState>(EMPTY_STATE);
+   const [connecting, setConnecting] = useState(false);
+-  const [loading, setLoading] = useState(!initialData);
++  const [loading, setLoading] = useState(true);
+
+   const [cliAction, setCliAction] = useState<CliAction | null>(null);
+-  const [accounts, setAccounts] = useState<GitHubAccount[]>(initialData?.accounts || []);
+-  const [userLogin, setUserLogin] = useState(
+-    initialData?.state?.sources?.openshipApp?.login ||
+-      initialData?.state?.sources?.ghCli?.login ||
+-      "",
+-  );
++  const [accounts, setAccounts] = useState<GitHubAccount[]>([]);
++  const [userLogin, setUserLogin] = useState("");
+   const [selectedOwner, setSelectedOwnerState] = useState(userLogin);
+-  const [repos, setRepos] = useState<GitHubRepo[]>(initialData?.repos || []);
++  const [repos, setRepos] = useState<GitHubRepo[]>([]);
+   const [loadingRepos, setLoadingRepos] = useState(false);
+-  const [installUrl, setInstallUrl] = useState<string | null>(initialData?.installUrl || null);
+-  const [capabilities, setCapabilities] = useState<GitHubCapabilities | null>(
+-    initialData?.capabilities ?? null,
+-  );
++  const [installUrl, setInstallUrl] = useState<string | null>(null);
++  const [capabilities, setCapabilities] = useState<GitHubCapabilities | null>(null);
+   const initRef = useRef(false);
+   // In-flight refresh promise — multiple triggers (mount effect,
+   // connect-flow follow-ups, pollConnect tick, etc.) collapse to ONE
+@@ -302,13 +295,10 @@ export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
+
+   /* ── On mount ───────────────────────────────────────────────── */
+   useEffect(() => {
+-    // If we have SSR initialData, don't double fetch!
+-    if (initialData) return;
+-
+     if (initRef.current) return;
+     initRef.current = true;
+     refresh();
+-  }, [refresh, initialData]);
++  }, [refresh]);
+
+   /* ── Connect GitHub ─────────────────────────────────────────── */
+   const connect = useCallback(

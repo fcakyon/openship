@@ -31,12 +31,13 @@ describe("authenticated global not-found shell", () => {
       cloudAuthUrl: "https://cloud.example.test",
       cloudApiUrl: "https://api.example.test",
     });
-    mocks.get.mockResolvedValue(null);
+    mocks.get.mockImplementation(() => new Promise(() => {}));
   });
 
-  it("forwards the server release to dashboard chrome", async () => {
+  it("renders dashboard chrome without waiting for GitHub", async () => {
     const page = (await NotFound()) as ReactElement<{ version?: string }>;
 
     expect(page.props.version).toBe("0.6.9");
+    expect(mocks.get).not.toHaveBeenCalled();
   });
 });

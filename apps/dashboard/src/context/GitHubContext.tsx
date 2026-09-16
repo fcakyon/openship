@@ -181,7 +181,6 @@ export function useGitHub() {
 
 interface GitHubProviderProps {
   children: React.ReactNode;
-  initialData?: any;
 }
 
 const EMPTY_STATE: GitHubConnectionState = {
@@ -197,30 +196,24 @@ const EMPTY_STATE: GitHubConnectionState = {
 // never leave every GitHub connect button disabled forever.
 const GITHUB_REDIRECT_TIMEOUT_MS = 10 * 60 * 1000;
 
-export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
+export function GitHubProvider({ children }: GitHubProviderProps) {
   // Note: setSelfHosted is no longer driven from this context — the
   // global platform mode is owned by PlatformContext and read from
   // env.CLOUD_MODE during the initial dashboard layout. We deliberately
   // don't shadow it here.
   const { showToast } = useToast();
-  const [state, setState] = useState<GitHubConnectionState>(initialData?.state ?? EMPTY_STATE);
+  const [state, setState] = useState<GitHubConnectionState>(EMPTY_STATE);
   const [connecting, setConnecting] = useState(false);
-  const [loading, setLoading] = useState(!initialData);
+  const [loading, setLoading] = useState(true);
 
   const [cliAction, setCliAction] = useState<CliAction | null>(null);
-  const [accounts, setAccounts] = useState<GitHubAccount[]>(initialData?.accounts || []);
-  const [userLogin, setUserLogin] = useState(
-    initialData?.state?.sources?.openshipApp?.login ||
-      initialData?.state?.sources?.ghCli?.login ||
-      "",
-  );
+  const [accounts, setAccounts] = useState<GitHubAccount[]>([]);
+  const [userLogin, setUserLogin] = useState("");
   const [selectedOwner, setSelectedOwnerState] = useState(userLogin);
-  const [repos, setRepos] = useState<GitHubRepo[]>(initialData?.repos || []);
+  const [repos, setRepos] = useState<GitHubRepo[]>([]);
   const [loadingRepos, setLoadingRepos] = useState(false);
-  const [installUrl, setInstallUrl] = useState<string | null>(initialData?.installUrl || null);
-  const [capabilities, setCapabilities] = useState<GitHubCapabilities | null>(
-    initialData?.capabilities ?? null,
-  );
+  const [installUrl, setInstallUrl] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState<GitHubCapabilities | null>(null);
   const initRef = useRef(false);
   // In-flight refresh promise — multiple triggers (mount effect,
   // connect-flow follow-ups, pollConnect tick, etc.) collapse to ONE
@@ -302,13 +295,10 @@ export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
 
   /* ── On mount ───────────────────────────────────────────────── */
   useEffect(() => {
-    // If we have SSR initialData, don't double fetch!
-    if (initialData) return;
-
     if (initRef.current) return;
     initRef.current = true;
     refresh();
-  }, [refresh, initialData]);
+  }, [refresh]);
 
   /* ── Connect GitHub ─────────────────────────────────────────── */
   const connect = useCallback(
