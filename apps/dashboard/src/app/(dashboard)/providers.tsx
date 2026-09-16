@@ -25,12 +25,10 @@ interface DashboardProvidersProps {
   machineName?: string;
   hostDomain?: string;
   initialUser?: AuthUser | null;
-  initialGithubData?: any;
 }
 
 export function DashboardProviders({
   children,
-  initialGithubData,
   initialUser,
   selfHosted,
   deployMode,
@@ -61,7 +59,7 @@ export function DashboardProviders({
         machineName={machineName}
         hostDomain={hostDomain}
       >
-        <GitHubProvider initialData={initialGithubData}>
+        <GitHubProvider>
           <CloudProvider>
             {/* Mounted only in mail view: it fetches the mail-server registry on
                 every page, and that call SSH-scans when the registry is empty

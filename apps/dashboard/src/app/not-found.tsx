@@ -1,5 +1,4 @@
 import { getSession, getDeploymentInfo } from "@/lib/server/session";
-import { serverApi } from "@/lib/server/api";
 import { AuthShell } from "@/components/auth-shell";
 import { Sidebar } from "@/components/sidebar";
 import { NotFoundContent } from "@/components/not-found-content";
@@ -28,13 +27,8 @@ export default async function NotFound() {
     return <AuthShell maxWidth="max-w-[520px]">{body}</AuthShell>;
   }
 
-  const initialGithubData = await serverApi
-    .get("github/home", { cache: "no-store" })
-    .catch(() => null);
-
   return (
     <DashboardProviders
-      initialGithubData={initialGithubData}
       initialUser={session.user}
       selfHosted={deploymentInfo.selfHosted}
       deployMode={deploymentInfo.deployMode}
