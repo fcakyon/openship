@@ -135,10 +135,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
     );
   }
 
-  const initialGithubData = await serverApi
-    .get("github/home", { cache: "no-store" })
-    .catch(() => null);
-
   // Resolve the rail HERE, on the server, so the first painted sidebar is already
   // the right one. Doing it client-side from document.cookie would render the
   // platform rail and then flip the entire nav after hydration. Passing the
@@ -147,7 +143,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <DashboardProviders
-      initialGithubData={initialGithubData}
       initialUser={session.user}
       selfHosted={deploymentInfo.selfHosted}
       deployMode={deploymentInfo.deployMode}
