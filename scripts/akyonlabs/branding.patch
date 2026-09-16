@@ -68,3 +68,26 @@ index 00000000..547c97e0
 +++ b/apps/dashboard/public/akyonlabs-favicon.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#101113"/><g transform="translate(6 13) scale(.18)" fill="#f4f4f5"><path d="M8 198 103 12h44L49 198Z M158 12h8v186h-38v-38H83l19-38h26V71Z M184 12h39v186h-39Z M235 161h51v37h-51Z"/></g></svg>
+diff --git a/apps/dashboard/src/app/(dashboard)/layout.tsx b/apps/dashboard/src/app/(dashboard)/layout.tsx
+index 75468ebd..ada0c30e 100644
+--- a/apps/dashboard/src/app/(dashboard)/layout.tsx
++++ b/apps/dashboard/src/app/(dashboard)/layout.tsx
+@@ -135,10 +135,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
+     );
+   }
+
+-  const initialGithubData = await serverApi
+-    .get("github/home", { cache: "no-store" })
+-    .catch(() => null);
+-
+   // Resolve the rail HERE, on the server, so the first painted sidebar is already
+   // the right one. Doing it client-side from document.cookie would render the
+   // platform rail and then flip the entire nav after hydration. Passing the
+@@ -147,7 +143,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
+
+   return (
+     <DashboardProviders
+-      initialGithubData={initialGithubData}
+       initialUser={session.user}
+       selfHosted={deploymentInfo.selfHosted}
+       deployMode={deploymentInfo.deployMode}
