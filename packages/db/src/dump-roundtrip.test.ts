@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { getTableColumns } from "drizzle-orm";
 import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
+import { clusterRuntimePlanFixture } from "../../contracts/test/cluster-runtime-fixtures";
 
 import { db, type DatabaseTransaction } from "./client";
 import {
@@ -51,10 +52,11 @@ function foreignKeyFields(
   return out;
 }
 
-/** A value the column will accept. The schema has no CHECK constraints and no
- *  enums, so type-correct is sufficient — this fixture proves referential
- *  integrity, not domain semantics. */
+/** Domain-constrained fields use valid examples; other fields only need the
+ * correct type to exercise referential integrity and JSON round trips. */
 function sampleValue(column: { dataType: string; name: string }, tableName: string): unknown {
+  if (tableName === "cluster_runtime" && column.name === "status") return "interrupted";
+  if (tableName === "cluster_runtime" && column.name === "plan") return { ...clusterRuntimePlanFixture(), cleanup: { verifiedAt: "2026-09-21T12:00:00.000Z", clusterUid: "saved-cluster-uid" } };
   switch (column.dataType) {
     case "string":
       return `${tableName}.${column.name}`;
@@ -205,6 +207,8 @@ describe("whole-instance dump → restore round trip", () => {
     for (const spec of topoOrderedTables()) {
       expect(await rowCount(spec), `${spec.sqlName} did not survive the restore`).toBe(1);
     }
+    const restoredRuntime = (await dumpSubgraph({ kind: "instance" })).tables.cluster_runtime;
+    expect(JSON.parse(JSON.stringify(restoredRuntime))).toEqual(overTheWire.tables.cluster_runtime);
 
     // Spot-check the exact edge that broke in production: a domain bound to a
     // service, restored with its binding intact rather than nulled or dropped.
@@ -233,6 +237,23 @@ describe("whole-instance dump → restore round trip", () => {
     const [after] = (await db.select().from(projectSpec.table)) as Array<Record<string, unknown>>;
     expect(after?.name).toBe(before?.name);
     expect(after?.name).not.toBe("must-roll-back");
+  });
+
+  it("restores pre-separation network table names without changing approved journal payloads", async () => {
+    const dump = JSON.parse(JSON.stringify(await dumpSubgraph({ kind: "instance" }))) as Awaited<ReturnType<typeof dumpSubgraph>>;
+    const journal = structuredClone(dump.tables.managed_network_operation);
+    for (const [current, legacy] of [
+      ["private_network", "server_cluster"], ["private_network_config", "cluster_network"], ["network_member", "cluster_member"],
+    ]) {
+      dump.tables[legacy!] = dump.tables[current!]!;
+      delete dump.tables[current!];
+    }
+    // Keeping the new pool tables here also checks their references resolve through the renamed parents.
+    await restoreSubgraph(dump, { mode: "wipe" });
+    const restored = JSON.parse(JSON.stringify(await dumpSubgraph({ kind: "instance" }))) as typeof dump;
+    expect(restored.tables.private_network?.[0]?.id).toBe(seeded.get("private_network")?.id);
+    expect(restored.tables.compute_cluster_member).toHaveLength(1);
+    expect(restored.tables.managed_network_operation).toEqual(journal);
   });
 
   it("skips explicitly excluded history tables at query time", async () => {
