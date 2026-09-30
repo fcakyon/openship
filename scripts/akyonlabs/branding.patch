@@ -1,8 +1,8 @@
 diff --git a/apps/dashboard/src/app/layout.tsx b/apps/dashboard/src/app/layout.tsx
-index 0c05de8a..efd860a8 100644
+index 0d9103f..f30cd04 100644
 --- a/apps/dashboard/src/app/layout.tsx
 +++ b/apps/dashboard/src/app/layout.tsx
-@@ -58,17 +58,11 @@ const BASE_METADATA: Metadata = {
+@@ -59,17 +59,11 @@ const BASE_METADATA: Metadata = {
    description: "Manage your deployments, domains, and infrastructure.",
    icons: {
      icon: [
@@ -22,7 +22,7 @@ index 0c05de8a..efd860a8 100644
    manifest: '/site.webmanifest',
  };
 diff --git a/apps/dashboard/src/components/logo.tsx b/apps/dashboard/src/components/logo.tsx
-index 0c42b4e6..115c4264 100644
+index 0c42b4e..115c426 100644
 --- a/apps/dashboard/src/components/logo.tsx
 +++ b/apps/dashboard/src/components/logo.tsx
 @@ -1,13 +1,13 @@
@@ -47,7 +47,7 @@ index 0c42b4e6..115c4264 100644
    );
  }
 diff --git a/apps/dashboard/src/lib/product-view.ts b/apps/dashboard/src/lib/product-view.ts
-index c87c0310..1db775a0 100644
+index c87c031..1db775a 100644
 --- a/apps/dashboard/src/lib/product-view.ts
 +++ b/apps/dashboard/src/lib/product-view.ts
 @@ -44,8 +44,8 @@ export function isProductView(value: unknown): value is ProductView {
@@ -59,23 +59,23 @@ index c87c0310..1db775a0 100644
 +export function brandNameFor(_brand: string, view: ProductView): string {
 +  return view === "mail" ? "Akyon Labs Mail" : "Akyon Labs";
  }
-
+ 
  export type ResolveProductViewInput = {
 diff --git a/apps/dashboard/public/akyonlabs-favicon.svg b/apps/dashboard/public/akyonlabs-favicon.svg
 new file mode 100644
-index 00000000..547c97e0
+index 0000000..547c97e
 --- /dev/null
 +++ b/apps/dashboard/public/akyonlabs-favicon.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#101113"/><g transform="translate(6 13) scale(.18)" fill="#f4f4f5"><path d="M8 198 103 12h44L49 198Z M158 12h8v186h-38v-38H83l19-38h26V71Z M184 12h39v186h-39Z M235 161h51v37h-51Z"/></g></svg>
 diff --git a/apps/dashboard/src/app/(dashboard)/layout.tsx b/apps/dashboard/src/app/(dashboard)/layout.tsx
-index 75468ebd..ada0c30e 100644
+index 06947c1..1bdf34f 100644
 --- a/apps/dashboard/src/app/(dashboard)/layout.tsx
 +++ b/apps/dashboard/src/app/(dashboard)/layout.tsx
 @@ -135,10 +135,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
      );
    }
-
+ 
 -  const initialGithubData = await serverApi
 -    .get("github/home", { cache: "no-store" })
 -    .catch(() => null);
@@ -84,7 +84,7 @@ index 75468ebd..ada0c30e 100644
    // the right one. Doing it client-side from document.cookie would render the
    // platform rail and then flip the entire nav after hydration. Passing the
 @@ -147,7 +143,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
-
+ 
    return (
      <DashboardProviders
 -      initialGithubData={initialGithubData}
@@ -92,23 +92,23 @@ index 75468ebd..ada0c30e 100644
        selfHosted={deploymentInfo.selfHosted}
        deployMode={deploymentInfo.deployMode}
 diff --git a/apps/dashboard/src/app/(dashboard)/providers.tsx b/apps/dashboard/src/app/(dashboard)/providers.tsx
-index 9e2953f7..00c98f95 100644
+index d6c6a0b..621a40a 100644
 --- a/apps/dashboard/src/app/(dashboard)/providers.tsx
 +++ b/apps/dashboard/src/app/(dashboard)/providers.tsx
-@@ -25,12 +25,10 @@ interface DashboardProvidersProps {
+@@ -26,12 +26,10 @@ interface DashboardProvidersProps {
    machineName?: string;
    hostDomain?: string;
    initialUser?: AuthUser | null;
 -  initialGithubData?: any;
  }
-
+ 
  export function DashboardProviders({
    children,
 -  initialGithubData,
    initialUser,
    selfHosted,
    deployMode,
-@@ -61,7 +59,7 @@ export function DashboardProviders({
+@@ -66,7 +64,7 @@ export function DashboardProviders({
          machineName={machineName}
          hostDomain={hostDomain}
        >
@@ -118,7 +118,7 @@ index 9e2953f7..00c98f95 100644
              {/* Mounted only in mail view: it fetches the mail-server registry on
                  every page, and that call SSH-scans when the registry is empty
 diff --git a/apps/dashboard/src/app/not-found.tsx b/apps/dashboard/src/app/not-found.tsx
-index 4a79d9b4..9596b2cc 100644
+index 4a79d9b..9596b2c 100644
 --- a/apps/dashboard/src/app/not-found.tsx
 +++ b/apps/dashboard/src/app/not-found.tsx
 @@ -1,5 +1,4 @@
@@ -130,7 +130,7 @@ index 4a79d9b4..9596b2cc 100644
 @@ -28,13 +27,8 @@ export default async function NotFound() {
      return <AuthShell maxWidth="max-w-[520px]">{body}</AuthShell>;
    }
-
+ 
 -  const initialGithubData = await serverApi
 -    .get("github/home", { cache: "no-store" })
 -    .catch(() => null);
@@ -142,21 +142,21 @@ index 4a79d9b4..9596b2cc 100644
        selfHosted={deploymentInfo.selfHosted}
        deployMode={deploymentInfo.deployMode}
 diff --git a/apps/dashboard/src/context/GitHubContext.tsx b/apps/dashboard/src/context/GitHubContext.tsx
-index 88a77d71..a000aa43 100644
+index 9182e48..39d4897 100644
 --- a/apps/dashboard/src/context/GitHubContext.tsx
 +++ b/apps/dashboard/src/context/GitHubContext.tsx
 @@ -181,7 +181,6 @@ export function useGitHub() {
-
+ 
  interface GitHubProviderProps {
    children: React.ReactNode;
 -  initialData?: any;
  }
-
+ 
  const EMPTY_STATE: GitHubConnectionState = {
-@@ -197,30 +196,24 @@ const EMPTY_STATE: GitHubConnectionState = {
- // never leave every GitHub connect button disabled forever.
+@@ -198,30 +197,24 @@ const EMPTY_STATE: GitHubConnectionState = {
  const GITHUB_REDIRECT_TIMEOUT_MS = 10 * 60 * 1000;
-
+ const GITHUB_REDIRECT_POLL_MS = 2000;
+ 
 -export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
 +export function GitHubProvider({ children }: GitHubProviderProps) {
    // Note: setSelfHosted is no longer driven from this context — the
@@ -169,7 +169,7 @@ index 88a77d71..a000aa43 100644
    const [connecting, setConnecting] = useState(false);
 -  const [loading, setLoading] = useState(!initialData);
 +  const [loading, setLoading] = useState(true);
-
+ 
    const [cliAction, setCliAction] = useState<CliAction | null>(null);
 -  const [accounts, setAccounts] = useState<GitHubAccount[]>(initialData?.accounts || []);
 -  const [userLogin, setUserLogin] = useState(
@@ -192,8 +192,8 @@ index 88a77d71..a000aa43 100644
    const initRef = useRef(false);
    // In-flight refresh promise — multiple triggers (mount effect,
    // connect-flow follow-ups, pollConnect tick, etc.) collapse to ONE
-@@ -302,13 +295,10 @@ export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
-
+@@ -308,13 +301,10 @@ export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
+ 
    /* ── On mount ───────────────────────────────────────────────── */
    useEffect(() => {
 -    // If we have SSR initialData, don't double fetch!
@@ -204,6 +204,6 @@ index 88a77d71..a000aa43 100644
      refresh();
 -  }, [refresh, initialData]);
 +  }, [refresh]);
-
+ 
    /* ── Connect GitHub ─────────────────────────────────────────── */
    const connect = useCallback(
