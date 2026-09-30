@@ -54,7 +54,7 @@ vi.mock("@repo/db", () => ({
   getDriver: () => "postgres",
 }));
 
-vi.mock("../../../src/modules/domains/project-route.service", () => ({
+vi.mock("@repo/platform/engine/modules/domains/project-route.service", () => ({
   deriveEnvironmentPublicEndpoints: vi.fn(),
   deriveNextProjectRouteState: vi.fn(() => ({ publicEndpoints: [] })),
   persistProjectRouteState: vi.fn(),
@@ -63,16 +63,16 @@ vi.mock("../../../src/modules/domains/project-route.service", () => ({
   syncProjectRouteState: vi.fn(),
 }));
 
-vi.mock("../../../src/modules/domains/routing-apply.service", () => ({
+vi.mock("@repo/platform/engine/modules/domains/routing-apply.service", () => ({
   applyProjectRouting: vi.fn(),
 }));
 
-import { createProject, ensureProject } from "../../../src/modules/projects/project-crud.service";
-import { ENV_MASK } from "../../../src/lib/secret-env";
+import { createProject, ensureProject } from "@repo/platform/engine/modules/projects/project-crud.service";
+import { ENV_MASK } from "@repo/platform/engine/lib/secret-env";
 import {
   newFolderSessionId,
   putFolderSession,
-} from "../../../src/modules/projects/folder/session-store";
+} from "@repo/platform/engine/modules/projects/folder/session-store";
 
 /** A two-service compose, exactly as folder/scan returns it. */
 const scannedServices = [
@@ -130,6 +130,23 @@ describe("ensureProject compose services", () => {
     });
   });
 
+  it.each([false, true])("refuses preview source config before changing a production target (existing=%s, #195)", async (existing) => {
+    if (existing) projectRepo.findById.mockResolvedValue(existingProject);
+
+    await expect(ensureProject({
+      name: "my-stack",
+      ...(existing ? { projectId: existingProject.id } : {}),
+      deploymentEnvironment: "preview",
+      gitProvider: "upload",
+      services: scannedServices,
+    }, "org_1")).rejects.toMatchObject({ code: "DEPLOYMENT_ENVIRONMENT_TARGET_MISMATCH" });
+
+    expect(projectRepo.update).not.toHaveBeenCalled();
+    expect(projectRepo.create).not.toHaveBeenCalled();
+    expect(projectGroupRepo.create).not.toHaveBeenCalled();
+    expect(serviceRepo.syncFromCompose).not.toHaveBeenCalled();
+  });
+
   it("persists scanner-backed services through the create entry point used by local import", async () => {
     await createProject(
       {
@@ -180,6 +197,7 @@ describe("ensureProject compose services", () => {
     expect(serverRepo.getInOrganization).toHaveBeenCalledWith("srv_remote", "org_1");
     expect(projectRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({ serverId: "srv_remote", organizationId: "org_1" }),
+      undefined,
     );
   });
 

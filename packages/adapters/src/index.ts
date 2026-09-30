@@ -24,6 +24,7 @@ export type {
   BuildStep,
   LogEntry,
   LogCallback,
+  RuntimeLogStreamOptions,
   ContainerInfo,
   ResourceUsage,
   RouteConfig,
@@ -63,6 +64,7 @@ export { DEFAULT_RESOURCE_CONFIG, DEFAULT_BUILD_RESOURCE_CONFIG } from "./types"
 export type {
   RuntimeAdapter,
   RuntimeCapability,
+  ReleaseCommandOptions,
   MultiServiceRuntimeAdapter,
   MultiServiceGroupHandle,
   MultiServiceDeployConfig,
@@ -116,6 +118,13 @@ export {
   PAGE_CONTAINER_PREFIX,
   provisionCloudWorkspace,
 } from "./runtime/cloud";
+export {
+  CloudDockerRuntime,
+  CLOUD_DOCKER_IMAGE,
+  type CloudDockerOptions,
+} from "./runtime/cloud/docker";
+export { cloudWorkspaceStatus, waitForCloudDockerWorkspace } from "./runtime/cloud/workspace-ready";
+export { CloudWorkspaceExecutor } from "./runtime/cloud/workspace-executor";
 export { BuildLogger } from "./runtime/build-pipeline";
 export {
   type DeployEnvironment,
@@ -169,8 +178,11 @@ export {
 } from "./runtime/volume-namespace";
 
 // ─── Infrastructure layer ────────────────────────────────────────────────────
-export type { RoutingProvider, SslProvider, ProvisionCertOptions } from "./infra/types";
+export type { RoutingProvider, SslProvider, ProvisionCertOptions, DnsCertificateProvider } from "./infra/types";
 export { NginxProvider, type NginxProviderOptions, type RateLimitConfig } from "./infra/nginx";
+// For the upstream-down e2e in apps/api: it asserts on the real marker rather than a copy of
+// the string, which could drift from the page it is checking for.
+export { EDGE_UPSTREAM_DOWN_SENTINEL } from "./infra/edge-upstream-down";
 export {
   compileVercelRouting,
   sourceToLocation,
@@ -214,6 +226,11 @@ export {
   MAIL_DB_USER,
   MAIL_DB_HOST_BIND,
   MAIL_DB_PORT,
+  MAIL_DB_DEFAULT_PORT,
+  MAIL_DB_FALLBACK_PORT,
+  MAIL_DB_PORT_RANGE_MAX,
+  MAIL_DB_INTERNAL_PORT,
+  resolveMailDbPort,
   type MailMount,
 } from "./infra/mail-container";
 
@@ -284,6 +301,9 @@ export {
   detectMailContainer,
   verifyMailEngine,
   buildMailRunCommand,
+  buildDbRunCommand,
+  retainedDbPort,
+  findAvailableMailDbPort,
   MAIL_DB_IMAGE,
   type ContainerMailOptions,
   type ContainerMailResult,
@@ -334,6 +354,7 @@ export type {
   CertCandidate,
 } from "./system/proxy/api";
 export { validateCertFor, readDeclaredPair, isSafeCertPath } from "./system/proxy/cert-material";
+export { certbotLineageDirs } from "./system/proxy/certbot-lineages";
 
 export type { SetupState, SetupStateStore, ComponentState } from "./system/state";
 export { FileStateStore } from "./system/state";
@@ -372,6 +393,7 @@ export { elevatedExecutor, elevateCommand } from "./system/elevated-executor";
 export type { Privileged, RootChecked } from "./system/privilege";
 export { privilegedExecutor, rootChecked, rootOrDegrade } from "./system/privilege";
 export { systemCatalog, MIN_DOCKER_VERSION } from "./system/catalog";
+export { SERVER_STATS_COMMAND } from "./system/server-stats";
 // Native-module versioning + migration framework (verify → reconcile).
 export {
   resolveVerifiedCatalog,
@@ -488,6 +510,7 @@ export {
   checkAll as checkAllComponents,
   checkComponents,
   checkDocker,
+  needsDockerGroupRefresh,
   checkGit,
   checkEdge,
   COMPONENT_CHECKS,
@@ -554,7 +577,7 @@ export {
 } from "./platform";
 
 // ─── Oblien SDK (re-export for single source of truth) ───────────────────────
-export { Oblien } from "oblien";
+export { Oblien } from "./oblien";
 export type {
   NamespaceUsageUnits,
   NamespaceUsageUnitBucket,
@@ -563,3 +586,29 @@ export type {
 
 // ─── Backup adapters (importing the index seeds all three registries) ───────
 export * from "./backup";
+export {
+  privateNetworkTools,
+  PrivateNetworkError,
+  type PrivateNetworkProbe,
+} from "./network/private-network";
+export {
+  managedNetworkTools,
+  type ManagedHostTransaction,
+  type ManagedHostReceipt,
+} from "./network/managed-network";
+export {
+  k3sTools,
+  k3sFirewallScript,
+  type K3sHostContext,
+  type K3sHostInspection,
+} from "./cluster/k3s";
+export * from "./cluster/kubernetes-api";
+export * from "./cluster/kubernetes-mutation";
+export * from "./cluster/storage";
+export * from "./cluster/storage-host";
+export * from "./cluster/volumes";
+export * from "./cluster/kubernetes-label";
+export * from "./cluster/database";
+export { databaseArchiveName } from "./cluster/redis-backups";
+export * from "./runtime/kubernetes";
+export { splitRuntimeEnv, droppedRuntimeEnvMessage } from "./runtime/runtime-env";

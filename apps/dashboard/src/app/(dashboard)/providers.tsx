@@ -5,6 +5,7 @@ import { CloudProvider } from "@/context/CloudContext";
 import { PlatformProvider } from "@/context/PlatformContext";
 import { MailScopeProvider } from "@/context/MailScopeContext";
 import { AuthProvider, type AuthUser } from "@/context/AuthContext";
+import { ModalProvider } from "@/context/ModalContext";
 import type { ProductView } from "@/lib/product-view";
 
 interface DashboardProvidersProps {
@@ -43,6 +44,10 @@ export function DashboardProviders({
   machineName,
   hostDomain,
 }: DashboardProvidersProps) {
+  // Modal content renders where its provider lives, even when opened by a
+  // descendant. Keep dashboard dialogs inside their platform/auth/mail context;
+  // the root layout's provider serves public screens outside this shell.
+  const content = <ModalProvider>{children}</ModalProvider>;
   return (
     <AuthProvider initialUser={initialUser}>
       <PlatformProvider
@@ -66,7 +71,7 @@ export function DashboardProviders({
                 (backfill from pre-table installs) — not something a platform-mode
                 dashboard should pay for. Consumers get an unloaded shape when
                 it's absent, so nothing breaks. */}
-            {productView === "mail" ? <MailScopeProvider>{children}</MailScopeProvider> : children}
+            {productView === "mail" ? <MailScopeProvider>{content}</MailScopeProvider> : content}
           </CloudProvider>
         </GitHubProvider>
       </PlatformProvider>
