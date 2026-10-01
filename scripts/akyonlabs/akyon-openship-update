@@ -17,6 +17,16 @@ mkdir "$work/source"
 tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
 cd "$work/source"
 git apply "$state/branding.patch"
+# Upstream fixes run on the official API image as read-only mounts until a release ships them.
+if git apply "$state/fixes.patch" 2>/dev/null; then
+  printf 'services:\n  api:\n    volumes:\n' > "$work/api.yml"
+  git apply --numstat "$state/fixes.patch" | cut -f3 | while read -r file; do
+    install -D -m 644 "$file" "$work/api-fixes/$file"
+    printf '      - %s/api-fixes/%s:/app/%s:ro\n' "$state" "$file" "$file" >> "$work/api.yml"
+  done
+else
+  echo 'fixes.patch does not apply to this release; using the official API.'
+fi
 patch_id=$(sha256sum "$state/branding.patch" | cut -c1-12)
 image="akyonlabs/openship-dashboard:$version-$patch_id"
 docker build -f apps/dashboard/Dockerfile -t "$image" .
@@ -34,6 +44,7 @@ backup="$state/backups/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$backup"
 cp "$compose/.env" "$compose/docker-compose.yml" "$backup/"
 if [[ -f "$state/dashboard.yml" ]]; then cp "$state/dashboard.yml" "$backup/"; fi
+if [[ -f "$state/api.yml" ]]; then cp -r "$state/api.yml" "$state/api-fixes" "$backup/"; fi
 docker inspect openship-dashboard-1 --format '{{.Config.Image}}' > "$backup/dashboard-image"
 # A database backup accompanies every upgrade; image rollback alone cannot undo migrations.
 docker exec openship-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup/database.sql.gz"
@@ -41,8 +52,18 @@ openship update
 actual=$(openship --version)
 [[ "$actual" == *"$version"* ]] || { echo "Release changed during build; rerun this command. Backup: $backup" >&2; exit 1; }
 printf 'services:\n  dashboard:\n    image: %s\n    pull_policy: never\n' "$image" > "$state/dashboard.yml"
+base=(-f docker-compose.yml -f "$state/dashboard.yml")
+rm -rf "$state/api.yml" "$state/api-fixes"
 cd "$compose"
-docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --no-deps dashboard
+if [[ -f "$work/api.yml" ]]; then
+  mv "$work/api.yml" "$work/api-fixes" "$state/"
+  docker compose "${base[@]}" -f "$state/api.yml" up -d --no-deps --wait api || {
+    echo "Patched API failed its health check; reverting to the official API. Backup: $backup" >&2
+    rm -rf "$state/api.yml" "$state/api-fixes"
+    docker compose "${base[@]}" up -d --no-deps --wait api
+  }
+fi
+docker compose "${base[@]}" up -d --no-deps dashboard
 for attempt in {1..30}; do
   if curl --max-time 15 -fsS https://app.akyonlabs.com/login | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.exit(s.includes("<title>Akyon Labs</title>")?0:1))'; then
     printf 'Akyon Labs %s is live. Backup: %s\n' "$version" "$backup"
