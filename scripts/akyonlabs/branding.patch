@@ -1,66 +1,3 @@
-diff --git a/apps/dashboard/src/app/layout.tsx b/apps/dashboard/src/app/layout.tsx
-index 0d9103f..f30cd04 100644
---- a/apps/dashboard/src/app/layout.tsx
-+++ b/apps/dashboard/src/app/layout.tsx
-@@ -59,17 +59,11 @@ const BASE_METADATA: Metadata = {
-   description: "Manage your deployments, domains, and infrastructure.",
-   icons: {
-     icon: [
--      { url: '/favicon.ico' },
--      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
--      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
-+      { url: '/akyonlabs-favicon.svg', type: 'image/svg+xml' },
-     ],
-     apple: [
-       { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
-     ],
--    other: [
--      { url: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
--      { url: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
--    ],
-   },
-   manifest: '/site.webmanifest',
- };
-diff --git a/apps/dashboard/src/components/logo.tsx b/apps/dashboard/src/components/logo.tsx
-index 0c42b4e..115c426 100644
---- a/apps/dashboard/src/components/logo.tsx
-+++ b/apps/dashboard/src/components/logo.tsx
-@@ -1,13 +1,13 @@
--/**
-- * Openship logo - a stylised "O" built with a bordered div.
-- * Uses CSS border-foreground so it renders instantly (no JS theme check).
-- */
- export function Logo({ size = 36, className }: { size?: number; className?: string }) {
-   return (
--    <div
--      className={`shrink-0 rounded-full border-[3px] border-foreground ${className ?? ""}`}
-+    <svg
-+      viewBox="0 0 300 210"
-+      fill="currentColor"
-+      className={`shrink-0 ${className ?? ""}`}
-       style={{ width: size, height: size }}
-       aria-hidden="true"
--    />
-+    >
-+      <path d="M8 198 103 12h44L49 198Z M158 12h8v186h-38v-38H83l19-38h26V71Z M184 12h39v186h-39Z M235 161h51v37h-51Z"/>
-+    </svg>
-   );
- }
-diff --git a/apps/dashboard/src/lib/product-view.ts b/apps/dashboard/src/lib/product-view.ts
-index c87c031..1db775a 100644
---- a/apps/dashboard/src/lib/product-view.ts
-+++ b/apps/dashboard/src/lib/product-view.ts
-@@ -44,8 +44,8 @@ export function isProductView(value: unknown): value is ProductView {
-  * pure function doesn't exempt it. Moving this back next to `useBrandName` throws
-  * "Attempted to call brandNameFor() from the server" on every page load.
-  */
--export function brandNameFor(brand: string, view: ProductView): string {
--  return view === "mail" ? `${brand} Mail` : brand;
-+export function brandNameFor(_brand: string, view: ProductView): string {
-+  return view === "mail" ? "Akyon Labs Mail" : "Akyon Labs";
- }
- 
- export type ResolveProductViewInput = {
 diff --git a/apps/dashboard/public/akyonlabs-favicon.svg b/apps/dashboard/public/akyonlabs-favicon.svg
 new file mode 100644
 index 0000000..547c97e
@@ -117,6 +54,29 @@ index d6c6a0b..621a40a 100644
            <CloudProvider>
              {/* Mounted only in mail view: it fetches the mail-server registry on
                  every page, and that call SSH-scans when the registry is empty
+diff --git a/apps/dashboard/src/app/layout.tsx b/apps/dashboard/src/app/layout.tsx
+index 551876d..7fb2f3b 100644
+--- a/apps/dashboard/src/app/layout.tsx
++++ b/apps/dashboard/src/app/layout.tsx
+@@ -62,17 +62,11 @@ const BASE_METADATA: Metadata = {
+   description: "Manage your deployments, domains, and infrastructure.",
+   icons: {
+     icon: [
+-      { url: '/favicon.ico' },
+-      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+-      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
++      { url: '/akyonlabs-favicon.svg', type: 'image/svg+xml' },
+     ],
+     apple: [
+       { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+     ],
+-    other: [
+-      { url: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
+-      { url: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
+-    ],
+   },
+   manifest: '/site.webmanifest',
+ };
 diff --git a/apps/dashboard/src/app/not-found.tsx b/apps/dashboard/src/app/not-found.tsx
 index 4a79d9b..9596b2c 100644
 --- a/apps/dashboard/src/app/not-found.tsx
@@ -141,11 +101,36 @@ index 4a79d9b..9596b2c 100644
        initialUser={session.user}
        selfHosted={deploymentInfo.selfHosted}
        deployMode={deploymentInfo.deployMode}
+diff --git a/apps/dashboard/src/components/logo.tsx b/apps/dashboard/src/components/logo.tsx
+index 0c42b4e..115c426 100644
+--- a/apps/dashboard/src/components/logo.tsx
++++ b/apps/dashboard/src/components/logo.tsx
+@@ -1,13 +1,13 @@
+-/**
+- * Openship logo - a stylised "O" built with a bordered div.
+- * Uses CSS border-foreground so it renders instantly (no JS theme check).
+- */
+ export function Logo({ size = 36, className }: { size?: number; className?: string }) {
+   return (
+-    <div
+-      className={`shrink-0 rounded-full border-[3px] border-foreground ${className ?? ""}`}
++    <svg
++      viewBox="0 0 300 210"
++      fill="currentColor"
++      className={`shrink-0 ${className ?? ""}`}
+       style={{ width: size, height: size }}
+       aria-hidden="true"
+-    />
++    >
++      <path d="M8 198 103 12h44L49 198Z M158 12h8v186h-38v-38H83l19-38h26V71Z M184 12h39v186h-39Z M235 161h51v37h-51Z"/>
++    </svg>
+   );
+ }
 diff --git a/apps/dashboard/src/context/GitHubContext.tsx b/apps/dashboard/src/context/GitHubContext.tsx
-index 9182e48..39d4897 100644
+index c7b857c..44ae368 100644
 --- a/apps/dashboard/src/context/GitHubContext.tsx
 +++ b/apps/dashboard/src/context/GitHubContext.tsx
-@@ -181,7 +181,6 @@ export function useGitHub() {
+@@ -131,7 +131,6 @@ export function useGitHub() {
  
  interface GitHubProviderProps {
    children: React.ReactNode;
@@ -153,7 +138,7 @@ index 9182e48..39d4897 100644
  }
  
  const EMPTY_STATE: GitHubConnectionState = {
-@@ -198,30 +197,24 @@ const EMPTY_STATE: GitHubConnectionState = {
+@@ -166,7 +165,7 @@ function availableOwner(current: string, login: string, accounts: GitHubAccount[
  const GITHUB_REDIRECT_TIMEOUT_MS = 10 * 60 * 1000;
  const GITHUB_REDIRECT_POLL_MS = 2000;
  
@@ -162,8 +147,10 @@ index 9182e48..39d4897 100644
    // Note: setSelfHosted is no longer driven from this context — the
    // global platform mode is owned by PlatformContext and read from
    // env.CLOUD_MODE during the initial dashboard layout. We deliberately
-   // don't shadow it here.
+@@ -174,20 +173,18 @@ export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
    const { showToast } = useToast();
+   const { t } = useI18n();
+   const [installationSelection, setInstallationSelection] = useState<GitHubInstallationSelection | null>(null);
 -  const [state, setState] = useState<GitHubConnectionState>(initialData?.state ?? EMPTY_STATE);
 +  const [state, setState] = useState<GitHubConnectionState>(EMPTY_STATE);
    const [connecting, setConnecting] = useState(false);
@@ -172,15 +159,12 @@ index 9182e48..39d4897 100644
  
    const [cliAction, setCliAction] = useState<CliAction | null>(null);
 -  const [accounts, setAccounts] = useState<GitHubAccount[]>(initialData?.accounts || []);
--  const [userLogin, setUserLogin] = useState(
--    initialData?.state?.sources?.openshipApp?.login ||
--      initialData?.state?.sources?.ghCli?.login ||
--      "",
--  );
+-  const [userLogin, setUserLogin] = useState(primaryLogin(initialData?.state ?? EMPTY_STATE));
+-  const [selectedOwner, setSelectedOwnerState] = useState(() => availableOwner("", userLogin, initialData?.accounts ?? [], initialData?.repos ?? []));
+-  const [repos, setRepos] = useState<GitHubRepo[]>(initialData?.repos || []);
 +  const [accounts, setAccounts] = useState<GitHubAccount[]>([]);
 +  const [userLogin, setUserLogin] = useState("");
-   const [selectedOwner, setSelectedOwnerState] = useState(userLogin);
--  const [repos, setRepos] = useState<GitHubRepo[]>(initialData?.repos || []);
++  const [selectedOwner, setSelectedOwnerState] = useState("");
 +  const [repos, setRepos] = useState<GitHubRepo[]>([]);
    const [loadingRepos, setLoadingRepos] = useState(false);
 -  const [installUrl, setInstallUrl] = useState<string | null>(initialData?.installUrl || null);
@@ -192,7 +176,7 @@ index 9182e48..39d4897 100644
    const initRef = useRef(false);
    // In-flight refresh promise — multiple triggers (mount effect,
    // connect-flow follow-ups, pollConnect tick, etc.) collapse to ONE
-@@ -308,13 +301,10 @@ export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
+@@ -276,13 +273,10 @@ export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
  
    /* ── On mount ───────────────────────────────────────────────── */
    useEffect(() => {
@@ -205,5 +189,20 @@ index 9182e48..39d4897 100644
 -  }, [refresh, initialData]);
 +  }, [refresh]);
  
-   /* ── Connect GitHub ─────────────────────────────────────────── */
-   const connect = useCallback(
+   useEffect(() => {
+     const onSourcesChanged = () => void refresh(true);
+diff --git a/apps/dashboard/src/lib/product-view.ts b/apps/dashboard/src/lib/product-view.ts
+index c87c031..1db775a 100644
+--- a/apps/dashboard/src/lib/product-view.ts
++++ b/apps/dashboard/src/lib/product-view.ts
+@@ -44,8 +44,8 @@ export function isProductView(value: unknown): value is ProductView {
+  * pure function doesn't exempt it. Moving this back next to `useBrandName` throws
+  * "Attempted to call brandNameFor() from the server" on every page load.
+  */
+-export function brandNameFor(brand: string, view: ProductView): string {
+-  return view === "mail" ? `${brand} Mail` : brand;
++export function brandNameFor(_brand: string, view: ProductView): string {
++  return view === "mail" ? "Akyon Labs Mail" : "Akyon Labs";
+ }
+ 
+ export type ResolveProductViewInput = {
