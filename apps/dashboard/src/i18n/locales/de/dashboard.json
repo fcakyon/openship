@@ -55,6 +55,7 @@
     "appsEmptyDesc": "Ein Klick, vollständig selbst gehostet — Datenbanken, Automatisierung, Analytics, Passwort-Vaults und mehr, auf deinen eigenen Servern."
   },
   "nav": {
+    "support": "Support",
     "scale": "Skalierung",
     "home": "Startseite",
     "new-project": "Neues Projekt",
@@ -74,6 +75,7 @@
     "addMailbox": "Postfach hinzufügen",
     "webmail": "Webmail",
     "sections": {
+      "help": "Hilfe",
       "main": "Allgemein",
       "settings": "Einstellungen",
       "infrastructure": "Infrastruktur",
@@ -83,7 +85,9 @@
       "account": "Konto"
     },
     "apps": "Apps",
-    "jobs": "Jobs"
+    "jobs": "Jobs",
+    "workspaces": "Arbeitsbereiche",
+    "actions": "Aktionen"
   },
   "sidebar": {
     "expand": "Seitenleiste ausklappen",
@@ -128,7 +132,15 @@
         "automation": "Automatisierung",
         "mail": "Mail",
         "other": "Tools"
-      }
+      },
+      "addCustom": "Eigene hinzufügen",
+      "howToAddApp": "Wie man eine App hinzufügt",
+      "removeCustomApp": "Benutzerdefinierte App entfernen",
+      "needsUpdateDesc": "Aktualisieren Sie Ihre Openship-Instanz, um diese App zu installieren.",
+      "needsUpdateBadge": "Aktualisierung erforderlich",
+      "needsVersionBadge": "Erfordert v{version}",
+      "removedToast": "„{name}“ entfernt.",
+      "removeFailedToast": "Die App konnte nicht entfernt werden."
     },
     "projects": {
       "title": "Projekte",

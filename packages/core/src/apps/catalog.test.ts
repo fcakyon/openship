@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { buildCatalog } from "../../scripts/gen-catalog";
-import { isValidAppTemplate, parseAppTemplate, templateEngineOk } from "./schema";
+import { buildCatalog, compileAppArticle } from "../../scripts/gen-catalog";
+import { appTemplateSchema, isValidAppTemplate, parseAppTemplate, templateEngineOk } from "./schema";
 import { APP_TEMPLATES, getAppTemplate } from "../app-templates";
 
 const committed = JSON.parse(
@@ -18,6 +18,38 @@ describe("app catalog (JSON)", () => {
     for (const app of APP_TEMPLATES) {
       expect(isValidAppTemplate(app), `${app.id} failed schema`).toBe(true);
     }
+  });
+
+  it("embeds authored Markdown in the same published artifact as the template", () => {
+    const app = getAppTemplate("convex")!;
+    const compiled = compileAppArticle({
+      ...app, marketplace: { features: app.marketplace?.features, articleFile: "articles/convex.md" },
+    });
+    expect(compiled.marketplace?.article).toBe(readFileSync(
+      fileURLToPath(new URL("./catalog/articles/convex.md", import.meta.url)), "utf8",
+    ).trim());
+    expect(compiled.marketplace).not.toHaveProperty("articleFile");
+    const { marketplace: _, ...before } = app;
+    const { marketplace: __, ...after } = compiled;
+    expect(after).toEqual(before);
+  });
+
+  it("rejects unsafe, missing, or ambiguous article sources", () => {
+    const app = getAppTemplate("convex")!;
+    for (const articleFile of ["../secret.md", "articles/../../secret.md", "/tmp/secret.md", "articles/missing-article.md"]) {
+      expect(() => compileAppArticle({ ...app, marketplace: { articleFile } })).toThrow();
+    }
+    expect(() => compileAppArticle({ ...app, marketplace: { article: "inline", articleFile: "articles/convex.md" } })).toThrow("choose article or articleFile");
+  });
+
+  it("keeps marketplace content optional and validates new fields", () => {
+    const { marketplace: _, ...legacy } = getAppTemplate("convex")!;
+    expect(isValidAppTemplate(legacy)).toBe(true);
+    expect(isValidAppTemplate({ ...legacy, marketplace: { features: [{ title: "Reactive data" }], article: "## Overview" } })).toBe(true);
+    for (const marketplace of [
+      { features: [{ title: "" }] }, { features: [{ title: "Valid", description: 1 }] },
+      { article: "x".repeat(200_001) }, { articleFile: "../outside.md" },
+    ]) expect(isValidAppTemplate({ ...legacy, marketplace })).toBe(false);
   });
 
   it("keeps Supabase's advertised SAML endpoints on its public Kong routes", () => {
@@ -57,7 +89,7 @@ describe("app catalog (JSON)", () => {
           `${app.id}/${service.name} uses a post-0.6.6 serviceSpec field but entry has no minEngine — engine gate cannot refuse pre-0.6.6 installs`,
         ).toBeDefined();
         expect(
-          templateEngineOk(app.minEngine, MIN_ENGINE),
+          templateEngineOk(MIN_ENGINE, app.minEngine),
           `${app.id}/${service.name} declares minEngine=${app.minEngine}, must be >= ${MIN_ENGINE}`,
         ).toBe(true);
       }
@@ -103,6 +135,22 @@ const base = {
 } as const;
 
 describe("app template — versioning + engine gate (parseAppTemplate)", () => {
+  it("accepts explicit resource profiles and rejects unlimited or malformed allocations", () => {
+    const resources = { cpuCores: 0.25, memoryMb: 256, diskMb: 8192 };
+    const profile = (value: unknown) => ({
+      ...base,
+      services: [{ ...base.services[0], resources: value }],
+    });
+    expect(appTemplateSchema.parse(profile(resources)).services![0]!.resources).toEqual(resources);
+    for (const invalid of [
+      { ...resources, cpuCores: 0 },
+      { ...resources, memoryMb: 64 },
+      { ...resources, diskMb: "8192" },
+      { ...resources, privileged: true },
+      { cpuCores: 1, memoryMb: 1024 },
+    ])
+      expect(isValidAppTemplate(profile(invalid))).toBe(false);
+  });
   it("accepts a well-formed entry (no version/engine constraints)", () => {
     expect(parseAppTemplate(base, { engineVersion: "0.3.0" })).toEqual({ ok: true });
   });
@@ -140,6 +188,40 @@ describe("templateEngineOk", () => {
 });
 
 describe("app template — strict fields + referential integrity", () => {
+  it.each(["single", "split", "grouped"])("preserves %s form layout metadata when parsing a catalog entry", (settings) => {
+    const template = {
+      ...base,
+      installLayout: { settings, columns: 2 },
+      settings: [
+        {
+          id: "general",
+          label: "General",
+          columns: 1,
+          fields: [{ key: "NOTE", service: "db", label: "Note", type: "textarea", fullWidth: true }],
+        },
+      ],
+    };
+    expect(appTemplateSchema.parse(template)).toEqual(template);
+  });
+
+  it.each([
+    { installLayout: { settings: "flex" } },
+    { installLayout: { columns: 2 } },
+    { installLayout: { settings: "single", columns: 3 } },
+    { settings: [{ id: "g", label: "G", columns: "2", fields: [] }] },
+    {
+      settings: [
+        {
+          id: "g",
+          label: "G",
+          fields: [{ key: "NOTE", service: "db", label: "Note", type: "text", fullWidth: "true" }],
+        },
+      ],
+    },
+  ])("rejects malformed form layout metadata: %j", (layout) => {
+    expect(isValidAppTemplate({ ...base, ...layout })).toBe(false);
+  });
+
   it("accepts the extended setting field types", () => {
     expect(
       isValidAppTemplate({

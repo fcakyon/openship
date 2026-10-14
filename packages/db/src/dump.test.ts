@@ -239,6 +239,46 @@ describe("instance-scope FK references (servers / mail_servers)", () => {
     ).toThrow(/references a servers not present/);
   });
 
+  it("does not accept a shadow parent in a table excluded from the restore scope", () => {
+    expect(() =>
+      assertDumpSelfContained(
+        dump({
+          backup_destination: [{ id: "bkd_evil", serverId: "srv_VICTIM" }],
+          servers: [{ id: "srv_VICTIM", organizationId: "o" }],
+        }),
+      ),
+    ).toThrow(/references a servers not present/);
+  });
+
+  it.each([
+    ["clusterId", "compute_cluster"],
+    ["workspaceId", "cloud_workspace"],
+  ])("rejects imported project execution ownership through %s", (column, parent) => {
+    expect(() =>
+      assertDumpSelfContained(
+        dump({
+          project: [{ id: "prj_evil", [column]: "target_VICTIM", organizationId: "o" }],
+          [parent]: [{ id: "target_VICTIM", organizationId: "o" }],
+        }),
+      ),
+    ).toThrow(new RegExp(`${column}.*not present`));
+  });
+
+  it("exports managed projects without live host pointers or retained-image claims", () => {
+    const tables: Record<string, Array<Record<string, unknown>>> = {
+      project: [{ id: "p", workspaceId: "cws", serverId: "server", activeDeploymentId: "d", hostPort: 32001 }],
+      deployment: [{ id: "d", projectId: "p", containerId: "container", artifactRetainedAt: new Date(), pinned: true,
+        meta: { managedWorkspaceId: "cws", managedServer: { ownerWorkspaceId: "cws", workspaceId: "vm" }, branch: "main" }, envVars: { KEEP: "encrypted" } }],
+      service_deployment: [{ deploymentId: "d", containerId: "container", allocatedResources: { containerId: "container" }, hostPort: 32001, hostPorts: { "80": 32001 }, ip: "172.18.0.2" }],
+    };
+    stripInstanceRefsInPlace(tables);
+    expect(tables.project![0]).toMatchObject({ workspaceId: null, serverId: null, activeDeploymentId: null, hostPort: null });
+    expect(tables.deployment![0]).toMatchObject({ containerId: null, artifactRetainedAt: null, pinned: false, meta: { branch: "main" }, envVars: { KEEP: "encrypted" } });
+    expect(JSON.stringify(tables)).not.toContain('"vm"');
+    expect(JSON.stringify(tables)).not.toContain('"cws"');
+    expect(tables.service_deployment![0]).toEqual({ deploymentId: "d", containerId: null, allocatedResources: null, hostPort: null, hostPorts: null, ip: null, imageRef: null });
+  });
+
   it("rejects crafted mail-server references on all three carrying tables", () => {
     for (const [table, row] of [
       ["backup_policy", { id: "bkp_evil", mailServerId: "srv_VICTIM" }],

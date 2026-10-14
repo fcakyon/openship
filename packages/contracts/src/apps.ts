@@ -31,14 +31,41 @@ export type AppCatalogSummary = Static<typeof AppCatalogSummarySchema>;
 export const AppCatalogEntrySchema = Type.Object({
   template, draft: Type.Union([Type.Object({ projectId: Type.String(), slug: Type.String(), name: Type.String() }), Type.Null()]),
 });
-export const AppHostFitInputSchema = Type.Object({ deployTarget: Type.Optional(Type.String()), serverId: Type.Optional(Type.String({ minLength: 1 })) }, { additionalProperties: false });
+export const AppHostFitInputSchema = Type.Object(
+  {
+    deployTarget: Type.Optional(Type.String()),
+    serverId: Type.Optional(Type.String({ minLength: 1 })),
+    projectId: Type.Optional(Type.String({ minLength: 1 })),
+  },
+  { additionalProperties: false },
+);
 export const HostCapacitySchema = Type.Object({
   cpuCores: Type.Number(), memoryMb: Type.Number(), source: Type.Union([Type.Literal("docker"), Type.Literal("local"), Type.Literal("unknown")]),
 });
 const shortfall = Type.Object({ needed: Type.Number(), available: Type.Number() });
 export const AppHostFitSchema = Type.Object({
-  minResources: Type.Union([minResources, Type.Null()]), capacity: HostCapacitySchema,
-  fit: Type.Object({ ok: Type.Boolean(), memory: Type.Optional(shortfall), cpu: Type.Optional(shortfall) }),
+  minResources: Type.Union([minResources, Type.Null()]),
+  capacity: HostCapacitySchema,
+  fit: Type.Object({
+    ok: Type.Boolean(),
+    memory: Type.Optional(shortfall),
+    cpu: Type.Optional(shortfall),
+  }),
+  cloud: Type.Optional(
+    Type.Object({
+      resources: Type.Object({
+        cpuCores: Type.Number(),
+        memoryMb: Type.Number(),
+        diskMb: Type.Number(),
+      }),
+      status: Type.Union([
+        Type.Literal("ready"),
+        Type.Literal("upgrade"),
+        Type.Literal("unavailable"),
+      ]),
+      message: Type.Optional(Type.String()),
+    }),
+  ),
 });
 export type AppHostFit = Static<typeof AppHostFitSchema>;
 export const InstallAppResultSchema = Type.Union([
@@ -84,6 +111,7 @@ export const AppConnectionSchema = Type.Object({
     id: Type.String(), label: Type.String(), help: Type.Optional(Type.String()), secret: Type.Boolean(), value: Type.String(),
     envKey: Type.Optional(Type.String()), service: nullableString, recommended: Type.Optional(Type.Boolean()), sourceLabel: Type.Optional(localized),
     sourceServiceId: Type.Optional(Type.String()),
+    sourceDatabaseId: Type.Optional(Type.String()), clusterId: Type.Optional(Type.String()),
     variants: Type.Optional(Type.Array(Type.Object({ id: Type.String(), label: localized, value: Type.String() }))),
     width: Type.Optional(Type.Union([Type.Literal("full"), Type.Literal("half")])), kind: Type.Optional(Type.Union([Type.Literal("text"), Type.Literal("url")])), internal: Type.Optional(Type.Boolean()),
   })),

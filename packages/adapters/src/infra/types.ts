@@ -26,6 +26,9 @@ export interface RoutingProvider {
    * removal must not recreate it after the caller has abandoned the attempt. */
   removeRoute(domain: string, opts?: { signal?: AbortSignal }): Promise<void>;
 
+  /** Pause a file-served site while retaining its hostname and certificate. */
+  suspendRoute?(domain: string): Promise<void>;
+
   /**
    * Re-emit vhosts an older generator wrote, so a fix to the EMITTED config shape reaches
    * a box that isn't redeploying. Converged boxes do nothing; see
@@ -104,6 +107,9 @@ export interface ProvisionCertOptions {
 }
 
 export interface SslProvider {
+  /** The provider handles issuance and renewal through its own API. DNS
+   * credentials and local Certbot hook scripts must not be required or sent. */
+  readonly certificateManagement?: "provider";
   /** Resumable DNS-01 orders. Waiting for a person must not hold an executor,
    * Certbot process, or deployment lock. Returned order material is private. */
   dnsChallengeProvider?(): Promise<DnsCertificateProvider>;

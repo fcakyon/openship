@@ -1,3 +1,4 @@
+import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
 import { Icon as UiIcon, type IconName } from "@repo/ui/icons";
 import React, { useCallback, useEffect, useState } from "react";
 import { useProjectSettings } from "@/context/ProjectSettingsContext";
@@ -25,6 +26,7 @@ import { ProjectRollbackSettings } from "@/components/rollback/ProjectRollbackSe
 import { isSchemaAppTemplate } from "@/components/app-settings/AppSettingsForm";
 import { AppConfiguration } from "./AppConfiguration";
 import { BuildSettings } from "./BuildSettings";
+import { CloudStaticHosting } from "@/components/project-settings/CloudStaticHosting";
 
 interface Props {
   onDeleteProject: (wipeVolumes?: boolean, recordOnly?: boolean) => void;
@@ -251,7 +253,8 @@ export const AdvancedSettings = ({ onDeleteProject }: Props) => {
     try {
       await navigator.clipboard.writeText(id);
       showToast(id, "success", menu.idCopied);
-    } catch {
+    } catch (diagnosticFailure) {
+      observeCaughtError(diagnosticFailure, "dashboard/app/(dashboard)/projects/[id]/components/AdvancedSettings");
       // Insecure context or a denied clipboard permission — say so rather than
       // reporting a copy that never happened.
       showToast(menu.copyFailed, "error", menu.copyId);
@@ -544,6 +547,27 @@ export const AdvancedSettings = ({ onDeleteProject }: Props) => {
           </SectionCard>
         )}
 
+        {projectData?.deployTarget === "cloud" &&
+          projectData.releaseSource?.artifactKind !== "image" &&
+          (projectData.serviceCount ?? 0) === 0 &&
+          workloadOf({
+            workloadType: projectData.workloadType ?? projectData.options?.workloadType,
+            hasServer: projectData.options?.hasServer,
+          }) === "static" && (
+            <SectionCard
+              title={t.projectSettings.cloudStaticHosting.title}
+              description={t.projectSettings.cloudStaticHosting.nextDeploy}
+              icon="cloud"
+              iconTone="primary"
+              collapsible
+            >
+              <CloudStaticHostingSetting
+                projectId={projectData.id}
+                initial={projectData.cloudStaticHosting ?? "pages"}
+              />
+            </SectionCard>
+          )}
+
         {/* Routing (edge → app upstream) — self-hosted only; cloud handles its
             own ingress. Advanced opt-in; loopback-port is the safe default. */}
         {projectData?.deployTarget !== "cloud" && (
@@ -631,8 +655,8 @@ export const AdvancedSettings = ({ onDeleteProject }: Props) => {
 
         {selfHosted && user?.role === "admin" && projectId && (
           <SectionCard
-            title="Export project"
-            description="Download all project settings, environment values, and credentials as plain JSON."
+            title={t.projectSettings.advanced.export.title}
+            description={t.projectSettings.advanced.export.description}
             icon={"download"}
             iconTone="primary"
             collapsible
@@ -736,7 +760,8 @@ function RoutingStrategyCard({
         "success",
         t.projectSettings.advanced.routing.title,
       );
-    } catch {
+    } catch (diagnosticFailure) {
+      observeCaughtError(diagnosticFailure, "dashboard/app/(dashboard)/projects/[id]/components/AdvancedSettings");
       setStrategy(prev);
       showToast(
         t.projectSettings.advanced.routing.toast.failed,
@@ -828,7 +853,8 @@ function InternalAliasCard({
       if ((res as { success?: boolean })?.success === false) throw new Error("update failed");
       setSaved(trimmed);
       showToast(c.toast.saved, "success", c.title);
-    } catch {
+    } catch (diagnosticFailure) {
+      observeCaughtError(diagnosticFailure, "dashboard/app/(dashboard)/projects/[id]/components/AdvancedSettings");
       showToast(c.toast.failed, "error", c.title);
     } finally {
       setSaving(false);
@@ -929,7 +955,8 @@ function ReadinessCard({
         const res = await projectsApi.update(projectId, { readiness: resolved });
         if ((res as { success?: boolean })?.success === false) throw new Error("update failed");
         savedRef.current = resolved;
-      } catch {
+      } catch (diagnosticFailure) {
+        observeCaughtError(diagnosticFailure, "dashboard/app/(dashboard)/projects/[id]/components/AdvancedSettings");
         setValue(previous);
         showToast(t.projectSettings.advanced.routing.toast.failed, "error", title);
       }
@@ -1019,4 +1046,36 @@ function TransferOptions({
       </div>
     </div>
   );
+}
+
+function CloudStaticHostingSetting({
+  projectId,
+  initial,
+}: {
+  projectId: string;
+  initial: "pages" | "server";
+}) {
+  const [value, setValue] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const { showToast } = useToast();
+  const { t } = useI18n();
+  const { updateProjectData } = useProjectSettings();
+  useEffect(() => setValue(initial), [initial]);
+  const save = async (next: "pages" | "server") => {
+    if (saving || next === value) return;
+    setSaving(true);
+    try {
+      const result = await projectsApi.update(projectId, { cloudStaticHosting: next });
+      if ((result as { success?: boolean }).success === false)
+        throw new Error("Could not save hosting settings");
+      setValue(next);
+      updateProjectData({ cloudStaticHosting: next });
+      showToast(t.projectSettings.cloudStaticHosting.nextDeploy, "success");
+    } catch (error) {
+      showToast(getApiErrorMessage(error), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <CloudStaticHosting value={value} disabled={saving} onChange={save} />;
 }

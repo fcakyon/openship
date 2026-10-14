@@ -56,7 +56,7 @@ export type DeployTarget = "local" | "server" | "cloud" | "cluster";
  * A project's deploy target, derived from its durable infrastructure bindings.
  *
  * There is deliberately no `deployTarget` column — see the schema notes on
- * `project.cloudWorkspaceId` and `project.serverId`, which already determine this fact;
+ * `project.workspaceId` and `project.serverId`, which already determine this fact;
  * storing it too would be a second source of truth for the same thing. This function is
  * where that rule lives, so the access URL, the payload the deploy wizard hydrates from,
  * and the deploy resolver cannot drift into disagreeing about where a project runs.
@@ -65,11 +65,11 @@ export type DeployTarget = "local" | "server" | "cloud" | "cluster";
  * first-class, separately pickable target.
  */
 export function deriveProjectDeployTarget(project: {
-  cloudWorkspaceId?: string | null;
+  workspaceId?: string | null;
   serverId?: string | null;
   clusterId?: string | null;
 }): DeployTarget {
-  if (project.cloudWorkspaceId) return "cloud";
+  if (project.workspaceId) return "cloud";
   if (project.clusterId) return "cluster";
   if (project.serverId) return "server";
   return "local";
@@ -343,6 +343,9 @@ export type ComposeAdvanced = {
    * nothing else (it keeps its own network identity, ports, and aliases).
    */
   pidMode?: string;
+  /** Docker/Compose hostname-to-address mappings, including host-gateway.
+   * Frozen with the service definition for redeploy and rollback. */
+  extraHosts?: Record<string, string>;
   /**
    * Custom east-west DNS alias for this service, resolving ALONGSIDE the default
    * `service.name` on the project network — both names reach the container. Set

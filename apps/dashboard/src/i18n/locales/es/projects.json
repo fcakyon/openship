@@ -34,6 +34,7 @@
     "local": "Local"
   },
   "card": {
+    "more": "Más",
     "liveVersion": "Versión en vivo v{version}",
     "sourceLocal": "Local",
     "services": "Servicios",
@@ -103,7 +104,7 @@
     "deletionInProgress": "Ya se está ejecutando otra eliminación para este proyecto",
     "deletionInProgressTitle": "Eliminación en curso",
     "confirmForceOrphan": "Algunos recursos no se pudieron eliminar del servidor. ¿Eliminar el proyecto de todos modos y limpiarlos automáticamente más tarde?",
-    "teardownFailedAt": "El desmontaje falló en: {reasons}. Reintenta o fuerza la eliminación para dejarlos huérfanos.",
+    "teardownFailedAt": "No se pudo completar la limpieza: {reasons}. El proyecto sigue guardado. Vuelve a intentar eliminarlo después de resolver el problema.",
     "teardownFailed": "Falló el desmontaje",
     "cleanupFailedTitle": "Falló la limpieza",
     "alreadyDeleted": "El proyecto ya fue eliminado",
@@ -194,7 +195,8 @@
     "targetPending": "Se elige al desplegar",
     "type": "Tipo",
     "typeApp": "App",
-    "typeProject": "Proyecto"
+    "typeProject": "Proyecto",
+    "subtextNoSource": "Conecta una fuente para configurar tu primer despliegue."
   },
   "overview": {
     "platformCloud": "Openship Cloud",
@@ -242,7 +244,10 @@
     "noTransfer": "Aún no hay transferencia"
   },
   "analytics": {
-    "loadFailed": "No se pudieron cargar las analíticas de tráfico"
+    "loadFailed": "No se pudieron cargar las analíticas de tráfico",
+    "loadFailedDescription": "Reintenta para cargar los datos más recientes.",
+    "sectionsUnavailable": "No disponible: {sections}.",
+    "staleData": "Se muestran los últimos datos disponibles."
   },
   "monitoring": {
     "noDataTitle": "Aún no hay datos de monitoreo",
@@ -307,7 +312,11 @@
       "disable": "Desactivar rutas principales"
     },
     "liveFeed": "Solicitudes recientes",
-    "liveFeedHint": "Mostrar la lista de solicitudes recientes en el mapa (el detalle completo está en Registros)"
+    "liveFeedHint": "Mostrar la lista de solicitudes recientes en el mapa (el detalle completo está en Registros)",
+    "dataUnavailable": "Algunos datos de monitoreo no están disponibles",
+    "connecting": "Conectando…",
+    "liveUnavailable": "Solicitudes en vivo no disponibles",
+    "liveUnavailableDescription": "El tráfico histórico sigue visible. Vuelve a conectar para ver las solicitudes en vivo."
   },
   "services": {
     "failedLoad": "No se pudieron cargar los servicios",
@@ -338,7 +347,10 @@
     "toastKeptEdits": "{name}: se conservaron tus ediciones",
     "failedResolveDrift": "No se pudo resolver la divergencia",
     "failedCreateService": "No se pudo crear el servicio",
-    "requestFailed": "La solicitud falló"
+    "requestFailed": "La solicitud falló",
+    "application": "Aplicación",
+    "applicationHint": "Se administra mediante los despliegues de este proyecto.",
+    "companionsTitle": "Añadir otra aplicación o servicio"
   },
   "serviceStatus": {
     "checking": "Comprobando…",
@@ -348,7 +360,7 @@
     "failed": "Fallido",
     "starting": "Iniciando",
     "restarting": "Reiniciando",
-    "unknown": "Desconocido"
+    "unknown": "Estado no disponible"
   },
   "routingRetry": {
     "title": "El enrutamiento del dominio necesita atención",
@@ -399,6 +411,8 @@
     "fixStep3": "Verifica el dominio y despliega."
   },
   "connections": {
+    "nativeClusterHint": "Elige un proyecto en el clúster de esta base de datos. Solo los proyectos vinculados reciben acceso privado.",
+    "nativeNoTargets": "Ningún otro proyecto utiliza este clúster todavía.",
     "useInProject": "Usar en un proyecto",
     "title": "Usar en un proyecto",
     "subtitle": "Comparte este servicio con otro proyecto mediante una conexión.",

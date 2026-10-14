@@ -8,6 +8,7 @@ import { Icon as UiIcon } from "@repo/ui/icons";
  *
  * Tabs:
  *   - general        → appearance, build preferences, language, interface, preferences
+ *   - security       → authenticator 2FA, recovery codes and passkeys
  *   - tokens         → clone credentials, API access tokens
  *   - mcp             → MCP connection (endpoint + client config)
  *   - team           → organization members + invitations (moved from /members)
@@ -40,6 +41,8 @@ import { InstanceInfo } from "./_components/InstanceInfo";
 import { UntrackedEdgeRoutes } from "./_components/UntrackedEdgeRoutes";
 import { LanguageSetting } from "./_components/LanguageSetting";
 import { PreferencesSetting } from "./_components/PreferencesSetting";
+import { PasskeysSetting } from "./_components/PasskeysSetting";
+import { TwoFactorSetting } from "./_components/TwoFactorSetting";
 import { ProductViewSetting } from "./_components/ProductViewSetting";
 import { MailModeSetting } from "./_components/MailModeSetting";
 import { UpdatesTab } from "./_components/UpdatesTab";
@@ -49,6 +52,7 @@ import { NotificationsTab } from "./_components/NotificationsTab";
 import { EmailSettings } from "./_components/EmailSettings";
 import { Credentials } from "./_components/Credentials";
 import { DataTransferTab } from "./_components/DataTransferTab";
+import { InstanceLocation } from "@/components/instance/InstanceLocation";
 import {
   SettingsSidebar,
   SettingsMobileTabs,
@@ -72,7 +76,7 @@ export default function SettingsPage() {
 }
 
 function SettingsPageInner() {
-  const { selfHosted, deployMode, productView } = usePlatform();
+  const { selfHosted, deployMode, productView, authMode } = usePlatform();
   const { refresh } = useCloud();
   const { showToast } = useToast();
   const { t } = useI18n();
@@ -147,6 +151,13 @@ function SettingsPageInner() {
             </>
           )}
 
+          {activeTab === "security" && authMode === "local" && (
+            <>
+              <TwoFactorSetting />
+              <PasskeysSetting />
+            </>
+          )}
+
           {/* Tokens is INBOUND only — somebody authenticating TO Openship. The clone PAT
               moved to Credentials, which is everything pointing the other way. */}
           {activeTab === "tokens" && <PersonalAccessTokens />}
@@ -191,6 +202,16 @@ function SettingsPageInner() {
 
           {activeTab === "instance" && (
             <>
+              {selfHosted && (
+                <InstanceLocation
+                  moveRequested={searchParams.get("move") === "1"}
+                  onMoveOpened={() => {
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete("move");
+                    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+                  }}
+                />
+              )}
               <InstanceInfo />
               {/* Instance-wide default product mode (Openship Mail vs the full
                   platform). Owner-gated inside; self-hosted only. */}

@@ -1,3 +1,4 @@
+import { reportCaughtError as observeCaughtError, diagnostics as errorDiagnostics } from "@repo/core/diagnostics";
 import { z } from "zod";
 import { createPrivateKey } from "crypto";
 import { assertCloudBillingEnvironment } from "./cloud-billing-env";
@@ -164,6 +165,13 @@ const envSchema = z.object({
 
   /* ---------- Mode ---------- */
   CLOUD_MODE: envBool("false"),
+  /** Optional product analytics. Production SaaS only; never enabled locally. */
+  POSTHOG_ENABLED: envBool("false"),
+  POSTHOG_PROJECT_KEY: z.string().optional(),
+  POSTHOG_HOST: z.string().default("https://us.i.posthog.com"),
+  /** Internal/demo workspaces and users, excluded on both ingestion paths. */
+  POSTHOG_EXCLUDED_ORGANIZATION_IDS: z.string().optional(),
+  POSTHOG_EXCLUDED_USER_IDS: z.string().optional(),
   /**
    * MASTER switch for the whole Openship Cloud billing feature (subscriptions,
    * top-ups). OFF by default → the billing state reports
@@ -350,6 +358,7 @@ const envSchema = z.object({
   OBLIEN_CLIENT_SECRET: z.string().optional(),
   /** Control-plane endpoint. Override only for an Oblien staging installation. */
   OBLIEN_API_URL: z.url().default("https://api.oblien.com"),
+  OBLIEN_RUNTIME_URL: z.url().default("https://workspace.oblien.com"),
   /**
    * Shared secret we hand Oblien when registering our webhook via
    * `webhooks.create` (see `ensureOblienWebhook`). Oblien signs each delivery
@@ -558,7 +567,8 @@ if (localGitHubAppConfiguration.configured) {
   }
   try {
     createPrivateKey(localGitHubAppPrivateKey);
-  } catch {
+  } catch (diagnosticFailure) {
+    observeCaughtError(diagnosticFailure, "platform/engine/config/env");
     throw new Error(
       "The configured GitHub App private key is not a valid PEM key. " +
         "Use GITHUB_PRIVATE_KEY_BASE64 for a single-line environment value.",
@@ -659,7 +669,7 @@ if (
   !env.OPENSHIP_LOCAL_DASHBOARD_URL &&
   env.NODE_ENV !== "test"
 ) {
-  console.warn(
+  errorDiagnostics.warn("platform/engine/config/env",
     `[env] DEPLOY_MODE="desktop" but OPENSHIP_LOCAL_DASHBOARD_URL is unset — ` +
       `"desktop" is for the Electron app only. A server install should declare ` +
       `DEPLOY_MODE="bare" (host processes) or "docker" (compose); claiming desktop ` +
@@ -722,7 +732,8 @@ if (env.OPENSHIP_PUBLIC_URL) {
   let parsed: URL;
   try {
     parsed = new URL(raw);
-  } catch {
+  } catch (diagnosticFailure) {
+    observeCaughtError(diagnosticFailure, "platform/engine/config/env");
     throw new Error(
       `OPENSHIP_PUBLIC_URL="${raw}" is not a valid absolute URL (expected e.g. https://ops.example.com).`,
     );
@@ -742,7 +753,8 @@ if (env.OPENSHIP_ADVERTISED_ORIGIN) {
   let parsed: URL;
   try {
     parsed = new URL(raw);
-  } catch {
+  } catch (diagnosticFailure) {
+    observeCaughtError(diagnosticFailure, "platform/engine/config/env");
     throw new Error(
       `OPENSHIP_ADVERTISED_ORIGIN="${raw}" is not a valid absolute URL (expected e.g. http://127.0.0.1:54777).`,
     );
@@ -776,7 +788,8 @@ function validateCookieDomain(raw: string): void {
   let apiHostname: string;
   try {
     apiHostname = new URL(runtimeTarget.api).hostname;
-  } catch {
+  } catch (diagnosticFailure) {
+    observeCaughtError(diagnosticFailure, "platform/engine/config/env");
     throw new Error(
       `runtimeTarget.api ("${runtimeTarget.api}") is not a valid URL — cannot validate BETTER_AUTH_COOKIE_DOMAIN.`,
     );

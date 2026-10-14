@@ -6,6 +6,7 @@
  * zone-scoped.
  */
 
+import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
 import type {
   DnsProvider,
   DnsProviderCredentials,
@@ -20,6 +21,7 @@ import {
   OPENSHIP_RECORD_COMMENT,
   isOpenshipManaged,
 } from "../types";
+import { quotedDnsTxt } from "../../../lib/dns-txt";
 
 const CF_API_BASE = "https://api.cloudflare.com/client/v4";
 
@@ -108,6 +110,7 @@ async function cfRequest<T>(
     });
     text = await res.text();
   } catch (err) {
+    observeCaughtError(err, "platform/engine/modules/dns/providers/cloudflare.provider");
     // DNS failure, TLS error, connection reset, or our own timeout —
     // indistinguishable from a 5xx to the caller, and just as transient. 503 keeps
     // `isTransient` true so the caller reports "couldn't check" rather than "not
@@ -120,7 +123,8 @@ async function cfRequest<T>(
   let body: CfResponse<T>;
   try {
     body = JSON.parse(text) as CfResponse<T>;
-  } catch {
+  } catch (diagnosticFailure) {
+    observeCaughtError(diagnosticFailure, "platform/engine/modules/dns/providers/cloudflare.provider");
     throw new DnsApiError(
       "cloudflare",
       res.status,
@@ -184,6 +188,8 @@ function zoneCandidates(hostname: string): string[] {
 export const cloudflareDnsProvider: DnsProvider = {
   name: "cloudflare",
 
+  formatContent(type, content) { return type === "TXT" ? quotedDnsTxt(content) : content; },
+
   descriptor: {
     name: "cloudflare",
     displayName: "Cloudflare",
@@ -209,6 +215,7 @@ export const cloudflareDnsProvider: DnsProvider = {
       }
       return { ok: false, reason: `Cloudflare reports this token as "${result.status}".` };
     } catch (err) {
+      observeCaughtError(err, "platform/engine/modules/dns/providers/cloudflare.provider");
       const reason =
         err instanceof DnsApiError && err.isAuthFailure
           ? "Cloudflare rejected this token. Check it was copied in full and has Zone:Read + DNS:Edit."
@@ -273,6 +280,7 @@ export const cloudflareDnsProvider: DnsProvider = {
     input: DnsRecordInput,
   ): Promise<DnsRecord> {
     const name = normalizeName(input.name);
+    const content = this.formatContent!(input.type, input.content);
     const desiredTtl = input.ttl ?? 1; // 1 = "automatic" in Cloudflare
     const ownMarker = input.comment ?? OPENSHIP_RECORD_COMMENT;
 
@@ -302,7 +310,7 @@ export const cloudflareDnsProvider: DnsProvider = {
       const comment = isOpenshipManaged(target) ? ownMarker : target.comment;
 
       const unchanged =
-        target.content === input.content &&
+        target.content === content &&
         target.proxied === proxied &&
         target.ttl === desiredTtl &&
         (input.priority == null || target.priority === input.priority) &&
@@ -317,7 +325,7 @@ export const cloudflareDnsProvider: DnsProvider = {
           body: JSON.stringify({
             type: input.type,
             name,
-            content: input.content,
+            content,
             ttl: desiredTtl,
             proxied,
             ...(input.priority != null ? { priority: input.priority } : {}),
@@ -338,7 +346,7 @@ export const cloudflareDnsProvider: DnsProvider = {
         body: JSON.stringify({
           type: input.type,
           name,
-          content: input.content,
+          content,
           ttl: desiredTtl,
           proxied: input.proxied ?? false,
           ...(input.priority != null ? { priority: input.priority } : {}),

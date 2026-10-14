@@ -1,3 +1,4 @@
+import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
 import { repos } from "@repo/db";
 import type { LogEntry } from "@repo/adapters";
 import * as sessionManager from "./session-manager";
@@ -6,6 +7,7 @@ import { snapshotToClass } from "./deployment-class";
 import { STEP_INDEX, STEP_PROGRESS } from "./build-steps";
 import { isMultiServiceProject } from "./compose/index";
 import { serviceKind } from "../../lib/deployable-service";
+import { getCloudBuildQueueStatus } from "./cloud-build-queue-status";
 import { terminalMessages } from "./terminal-messages";
 import { maskServicesEnv } from "../../lib/secret-env";
 import { resolveProjectRouteState } from "../domains/project-route.service";
@@ -42,9 +44,13 @@ export async function getBuildSessionStatus(deploymentId: string) {
   const terminalStatus = dep.status === "cancelled" || buildSessionRow?.status === "cancelled"
     ? "cancelled"
     : terminalBuildStatus(dep.status) ?? terminalBuildStatus(buildSessionRow?.status ?? "");
-  const effectiveStatus = terminalStatus ?? memSession?.status ?? buildSessionRow?.status ?? dep.status;
+  const queue = terminalStatus ? null : await getCloudBuildQueueStatus(project, dep).catch((error) => {
+    observeCaughtError(error, "platform/engine/modules/deployments/build-status.service");
+    return null;
+  });
+  const effectiveStatus = queue ? "queued" : terminalStatus ?? memSession?.status ?? buildSessionRow?.status ?? dep.status;
   const isActive =
-    terminalStatus === undefined &&
+    queue === null && terminalStatus === undefined &&
     memSession != null && !["ready", "failed", "cancelled"].includes(memSession.status);
 
   const logEntries = isActive
@@ -93,7 +99,7 @@ export async function getBuildSessionStatus(deploymentId: string) {
   const targetServer = snapshot?.serverId
     ? await repos.server
         .getInOrganization(snapshot.serverId, dep.organizationId)
-        .catch(() => null)
+        .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build-status.service"); return null; })
     : null;
 
   // Derive step progress from persisted log entries when no active session
@@ -142,18 +148,17 @@ export async function getBuildSessionStatus(deploymentId: string) {
   }
 
   const [deploymentServices, projectServices] = await Promise.all([
-    repos.service.listByDeployment(deploymentId).catch(() => []),
-    repos.service.listByProject(project.id).catch(() => []),
+    repos.service.listByDeployment(deploymentId).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build-status.service"); return []; }),
+    repos.service.listByProject(project.id).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build-status.service"); return []; }),
   ]);
-  // A cancelled row is not necessarily safe to replace immediately: the
-  // asynchronous worker keeps its durable build-session lease until its outer
-  // finally has finished unwinding. Surface that distinction to the dashboard
-  // so it can show "finishing cancellation" instead of offering a redeploy that
-  // the concurrency guard will (correctly) reject.
-  const cancellationPending =
-    effectiveStatus === "cancelled"
-      ? await repos.deployment.hasLiveBuildExecution(dep.id, project.id).catch(() => true)
+  // A terminal outcome can be persisted before the worker's outer finally
+  // releases its durable execution lease. Keep the UI's terminal projection,
+  // but let SDK callers wait until redeployment and teardown are safe too.
+  const completionPending =
+    terminalBuildStatus(effectiveStatus) !== undefined
+      ? await repos.deployment.hasLiveBuildExecution(dep.id, project.id).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build-status.service"); return true; })
       : false;
+  const cancellationPending = effectiveStatus === "cancelled" && completionPending;
   const isServiceDeployment =
     snapshot?.serviceDeploymentMode === "services" ||
     (
@@ -211,6 +216,7 @@ export async function getBuildSessionStatus(deploymentId: string) {
     deployment_id: dep.id,
     project_id: project.id,
     status: effectiveStatus,
+    queue,
     is_active: isActive,
     logs: logsText,
     logEntries: structuredLogs,
@@ -270,6 +276,7 @@ export async function getBuildSessionStatus(deploymentId: string) {
     // the server-backed keep/reject decision so the "Action Required" banner +
     // modal reappear after a refresh, until the user keeps or rejects.
     deploymentStatus: dep.status,
+    completionPending,
     cancellationPending,
     decisionPending: snapshot?.composeDeployment?.decision === "pending",
     partial: snapshot?.composeDeployment

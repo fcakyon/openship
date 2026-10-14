@@ -12,6 +12,7 @@
  * request includes parsed compose services.
  */
 
+import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
 import { listActiveServiceDeployments } from "@repo/platform/engine/lib/active-deployment";
 import { repos } from "@repo/db";
 import type { Deployment, Project } from "@repo/db";
@@ -53,6 +54,8 @@ import {
   throwIfDeploymentCancelled,
 } from "../deployment-cancellation";
 import { assertExactServiceTargets } from "../exact-service-targets";
+import { strictRefreshImages } from "../pinned-artifacts";
+import { cloudCapacityFailure } from "../../../lib/cloud-capacity";
 
 export interface ComposePipelineOpts {
   project: Project;
@@ -95,6 +98,8 @@ export interface ComposePipelineOpts {
   cloneOnServer?: boolean;
   /** Outer deployment cancellation signal. */
   signal?: AbortSignal;
+  /** All image-build tasks have settled; deployment/health checks do not occupy a build slot. */
+  onBuildFinished?: () => Promise<void>;
 }
 
 async function cleanupBuiltArtifacts(
@@ -114,6 +119,7 @@ async function cleanupBuiltArtifacts(
   for (const [serviceId, imageRef] of builtImageRefs) {
     if (retainedRefs.has(imageRef)) continue;
     await cleanupBuildArtifact(runtime, imageRef).catch((err) => {
+      observeCaughtError(err, "platform/engine/modules/deployments/compose/pipeline");
       logger.log(
         `Warning: failed to clean up built service artifact ${serviceId}: ${safeErrorMessage(err)}\n`,
         "warn",
@@ -153,6 +159,7 @@ async function recordCohortAbort(opts: {
         reason: opts.failures.has(service.id) ? "build-failed" : "cohort-aborted",
       })
       .catch((err) => {
+        observeCaughtError(err, "platform/engine/modules/deployments/compose/pipeline");
         opts.logger.log(
           `Warning: could not record the aborted service "${service.name}": ${safeErrorMessage(err)}\n`,
           "warn",
@@ -180,6 +187,7 @@ async function cleanupUnusedBuiltArtifactsAfterDeployError(
   try {
     rows = await repos.service.listByDeployment(dep.id);
   } catch (err) {
+    observeCaughtError(err, "platform/engine/modules/deployments/compose/pipeline");
     logger.log(
       `Warning: could not verify which built service artifacts are unused; retaining them: ${safeErrorMessage(err)}\n`,
       "warn",
@@ -201,6 +209,7 @@ async function cleanupUnusedBuiltArtifactsAfterDeployError(
   for (const [serviceId, imageRef] of builtImageRefs) {
     if (referencedArtifacts.has(imageRef)) continue;
     await cleanupBuildArtifact(runtime, imageRef).catch((err) => {
+      observeCaughtError(err, "platform/engine/modules/deployments/compose/pipeline");
       logger.log(
         `Warning: failed to clean up unused built service artifact ${serviceId}: ${safeErrorMessage(err)}\n`,
         "warn",
@@ -264,32 +273,11 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
    * already-running containers in place) sets this on the snapshot.
    */
   const strictScope = !dep.forceAll && !!targetServiceIds && Boolean(snapshot.strictServiceScope);
+  const getCurrentServices = () => repos.service.listByProject(project.id);
 
-  // Service rows can change after request-time/reconciliation validation. Do
-  // one final fail-closed check in the worker before any image build, pull, or
-  // container replacement begins.
-  const checksCloudImageRefresh =
-    snapshot.forcePullImages && runtime.name === "cloud" && !runtime.supports("dockerHost") && Boolean(project.activeDeploymentId);
-  let currentServices: Awaited<ReturnType<typeof repos.service.listByProject>> | undefined;
-  const getCurrentServices = async () => {
-    currentServices ??= await repos.service.listByProject(project.id);
-    return currentServices;
-  };
-  if ((strictScope && targetServiceIds) || checksCloudImageRefresh) {
-    const services = await getCurrentServices();
-    if (strictScope && targetServiceIds) {
-      assertExactServiceTargets(services, [...targetServiceIds]);
-    }
+  if (strictScope && targetServiceIds) {
+    assertExactServiceTargets(await getCurrentServices(), [...targetServiceIds]);
   }
-  // Read this before building too. If the ownership query is unavailable, the
-  // safe result is a failed deployment with no newly-created artifact to leak.
-  const priorCloudWorkspaceServiceIds = checksCloudImageRefresh
-    ? new Set(
-        (await listActiveServiceDeployments(project))
-          .filter((row) => Boolean(row.containerId))
-          .map((row) => row.serviceId),
-      )
-    : undefined;
   const keepProvisionedOnCancel = () => deploymentCancellationKeepsProvisioned(opts.signal);
 
   const composeBuild = await buildComposeImages({
@@ -312,6 +300,13 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
     signal: opts.signal,
   });
 
+  try {
+    await opts.onBuildFinished?.();
+  } catch (error) {
+    await cleanupBuiltArtifacts(runtime, composeBuild.builtImageRefs, logger);
+    throw error;
+  }
+
   // Cancelled during the image phase: stop here. setDeploymentStatus below has no
   // terminal-state guard, so without this the cancelled row would be flipped back
   // to "deploying" and the services the user cancelled would start anyway.
@@ -323,6 +318,13 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
       keepProvisioned: keepProvisionedOnCancel(),
     });
     return;
+  }
+
+  const capacityFailure = composeBuild.buildErrorCauses
+    ?.map(cause => cloudCapacityFailure(cause, project.id, buildResources)).find(Boolean);
+  if (capacityFailure) {
+    await cleanupBuiltArtifacts(runtime, composeBuild.builtImageRefs, logger);
+    throw capacityFailure;
   }
 
   // An exact multi-service webhook is one coordinated rollout. If any selected
@@ -344,45 +346,6 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
     await onFailure(ctx, message, composeBuild.durationMs);
     return;
   }
-
-  // Cloud preserves an image service's only durable disk by reusing its
-  // existing workspace. That also preserves the workspace's original image,
-  // so a forced mutable-tag refresh cannot be honoured safely there without
-  // deleting user data. Refuse the whole cohort before any service is touched;
-  // Docker remains the supported image-refresh runtime.
-  if (checksCloudImageRefresh && priorCloudWorkspaceServiceIds) {
-    const blockedIds = new Set(
-      [...composeBuild.imageRefs.keys()].filter(
-        (serviceId) =>
-          (!targetServiceIds || targetServiceIds.has(serviceId)) &&
-          !composeBuild.builtImageRefs.has(serviceId) &&
-          priorCloudWorkspaceServiceIds.has(serviceId),
-      ),
-    );
-    if (blockedIds.size > 0) {
-      const services = await getCurrentServices();
-      const blockedNames = services
-        .filter((service) => blockedIds.has(service.id))
-        .map((service) => service.name);
-      const message =
-        `Cannot refresh mutable image${blockedNames.length === 1 ? "" : "s"} for cloud service${blockedNames.length === 1 ? "" : "s"} ` +
-        `${blockedNames.join(", ")} without replacing persistent workspace data. ` +
-        "Use a self-hosted Docker target for forced image refreshes.";
-      logger.log(`${message}\n`, "error");
-      await recordCohortAbort({
-        dep,
-        services,
-        targetServiceIds,
-        failures: new Map([...blockedIds].map((id) => [id, message])),
-        reason: "cloud cannot safely refresh an existing image workspace",
-        logger,
-      });
-      await cleanupBuiltArtifacts(runtime, composeBuild.builtImageRefs, logger);
-      await onFailure(ctx, message, composeBuild.durationMs);
-      return;
-    }
-  }
-
   if (composeBuild.buildFailures.size > 0) {
     logger.log(
       `Build phase completed with ${composeBuild.buildFailures.size} failed service image${composeBuild.buildFailures.size === 1 ? "" : "s"}. Deploying available services...\n`,
@@ -419,6 +382,7 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
       serverId: snapshot.serverId,
       targetServiceIds,
       strictScope,
+      retainedImages: strictRefreshImages(snapshot),
       forcePullImages: snapshot.forcePullImages,
       onArtifactActivationStart: () => {
         artifactActivationStarted = true;
@@ -464,7 +428,9 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
         runtime,
         composeBuild.builtImageRefs,
         logger,
-      ).catch(() => {});
+      ).catch((diagnosticFailure) => {
+        observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/compose/pipeline");
+      });
     } else {
       logger.log(
         "Warning: service activation may have started; retaining built artifacts for reconciliation.\n",

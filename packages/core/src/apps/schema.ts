@@ -1,5 +1,6 @@
 import * as z from "zod";
 import { compareSemver } from "../updates/semver";
+import { MIN_CPU_CORES, MIN_MEMORY_MB } from "../resources";
 
 /**
  * Runtime shape gate for a repo-fetched app-catalog overlay. The BUNDLED catalog
@@ -64,6 +65,20 @@ const serviceSpec = z.object({
   name: z.string(),
   /** Prebuilt image to pull. Exactly one of `image`/`build` must be set per service. */
   image: z.string().optional(),
+  /** Exact retired defaults eligible for an explicit operator repair. Never auto-upgrade. */
+  replacesImages: z.array(z.string().min(1)).optional(),
+  /** SHA-256 of explicitly retired inline recipes eligible for operator-reviewed
+   * conversion to this image and its runtime setup files. Never auto-applied. */
+  replacesBuilds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).optional(),
+  /** Advisory sizing recommendation, never an installed container limit. */
+  resources: z
+    .object({
+      cpuCores: z.number().min(MIN_CPU_CORES),
+      memoryMb: z.number().int().min(MIN_MEMORY_MB),
+      diskMb: z.number().int().min(64),
+    })
+    .strict()
+    .optional(),
   /** Inline build context (see `serviceBuild`) — mutually exclusive with `image`. */
   build: serviceBuild.optional(),
   ports: z.array(z.string()).optional(),
@@ -242,6 +257,7 @@ const settingField = z.object({
   patternError: z.string().optional(),
   default: z.string().optional(),
   placeholder: z.string().optional(),
+  fullWidth: z.boolean().optional(),
   secret: z.boolean().optional(),
   trueValue: z.string().optional(),
   falseValue: z.string().optional(),
@@ -263,7 +279,13 @@ const settingGroup = z.object({
   id: z.string(),
   label: z.string(),
   description: z.string().optional(),
+  columns: z.union([z.literal(1), z.literal(2)]).optional(),
   fields: z.array(settingField),
+});
+
+const installLayout = z.object({
+  settings: z.enum(["single", "split", "grouped"]),
+  columns: z.union([z.literal(1), z.literal(2)]).optional(),
 });
 
 const management = z.union([
@@ -275,6 +297,11 @@ export const appTemplateSchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
+  marketplace: z.object({
+    features: z.array(z.object({ title: z.string().min(1), description: z.string().optional() })).optional(),
+    article: z.string().max(200_000).optional(),
+    articleFile: z.string().regex(/^articles\/[a-z0-9][a-z0-9-]*\.md$/).optional(),
+  }).optional(),
   kind: z.enum(["template", "flow"]),
   logo: z.string(),
   category: z.enum(["backend", "database", "cms", "mail", "analytics", "automation", "other"]),
@@ -284,6 +311,7 @@ export const appTemplateSchema = z.object({
   configFields: z.array(configField).optional(),
   flowHref: z.string().optional(),
   settings: z.array(settingGroup).optional(),
+  installLayout: installLayout.optional(),
   management: management.optional(),
   prepare: z.array(prepareStep).optional(),
   connection: connection.optional(),

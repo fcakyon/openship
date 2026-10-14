@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
@@ -17,6 +17,14 @@ import {
 const exec = promisify(execFile);
 
 const cleanups: Array<() => Promise<void>> = [];
+
+it("refuses explicit PHP selection on a user Dockerfile without rewriting it", async () => {
+  const repo = await makeRepo("");
+  const original = await readFile(join(repo, "Dockerfile"), "utf8");
+  await expect(resolveServiceDockerfile(repo, { ...config(repo), runtimeVersion: "8.3", stack: "laravel" })).rejects.toThrow(/cannot change a repository Dockerfile/);
+  expect(await readFile(join(repo, "Dockerfile"), "utf8")).toBe(original);
+  expect((await resolveServiceDockerfile(repo, config(repo))).dockerfileName).toBe("Dockerfile");
+});
 
 /** A git repo with `build/` and `node_modules/` at the root AND nested, a
  *  `Dockerfile`, and the given `.dockerignore`. Everything is tracked. */
@@ -129,6 +137,17 @@ describe("prepareSourceTree — .dockerignore pruning", () => {
     const files = await contextFor("*\n!package.json\n");
 
     expect(files).toEqual([".dockerignore", "Dockerfile", "package.json"]);
+  });
+
+  it("keeps directories re-included by dir-only negations (#974)", async () => {
+    // Regression: the pruner tested directories with their bare path, so the
+    // dir-only re-include `!app/` never re-matched and `app/` was rm -rf'd.
+    const files = await contextFor("*\n!package.json\n!app/\n!app/**\n");
+
+    expect(files).toContain("app/build/page.tsx");
+    expect(files).toContain("package.json");
+    expect(files).not.toContain("build/artifact.txt");
+    expect(files).not.toContain("node_modules/left-pad/index.js");
   });
 });
 

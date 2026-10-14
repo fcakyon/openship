@@ -1,4 +1,5 @@
 import { Type, type Static } from "@sinclair/typebox";
+import { GitHubDeploymentChecksSchema } from "./deployment-checks";
 import {
   CreateProjectEnvironmentBody,
   MergeEnvVarsBody,
@@ -21,7 +22,11 @@ import { AppError } from "@repo/core";
 import { ProjectSchema } from "./projects";
 import type { ResourceOperationSchema, ResourceOperations } from "./resource-operations";
 import { ProjectIntegrationSchemas } from "./project-integrations";
-import { ProjectRoutingSchemas } from "./project-routing";
+import {
+  ProjectRoutingSchemas,
+  ProjectRoutingClaimSchema,
+  ProjectRoutingRetrySchema,
+} from "./project-routing";
 import { ProjectLogSchemas } from "./project-logs";
 import { ProjectTransferSchemas } from "./project-transfer";
 import { AppProjectSchemas } from "./apps";
@@ -64,6 +69,7 @@ const ResourceValuesSchema = Type.Object({
 export const ProjectResourcesSchema = Type.Object({
   production: ResourceValuesSchema,
   build: ResourceValuesSchema,
+  buildMode: Type.Optional(Type.Union([Type.Literal("automatic"), Type.Literal("custom")])),
   sleepMode: Type.String(),
   port: Type.Number(),
   tier: ResourceTierEnum(),
@@ -180,6 +186,12 @@ export const ProjectGitInfoSchema = Type.Union([
       }),
     ),
     auto_deploy: Type.Boolean(),
+    github_checks: Type.Optional(GitHubDeploymentChecksSchema),
+    github_checks_delivery: Type.Optional(Type.Union([Type.Object({
+      error: nullableString,
+      updatedAt: Type.String(),
+      pending: nullableString,
+    }), Type.Null()])),
     webhook_strategy: webhookStrategy,
     webhook_active: Type.Boolean(),
     webhook_domain: nullableString,
@@ -194,6 +206,8 @@ export const ProjectDetailsSchema = Type.Object({
   project: Type.Intersect([
     ProjectSchema,
     Type.Object({
+      routingClaims: Type.Optional(Type.Array(ProjectRoutingClaimSchema)),
+      routingRetry: Type.Optional(Type.Union([ProjectRoutingRetrySchema, Type.Null()])),
       serviceCount: Type.Integer({ minimum: 0 }),
       hasMultipleServices: Type.Boolean(),
       projectType: Type.Union([
@@ -267,6 +281,7 @@ const driftBase = {
   supported: Type.Literal(true),
   behind: Type.Boolean(),
   latestInProgress: Type.Boolean(),
+  inProgressDeploymentId: Type.Optional(nullableString),
 };
 export const ProjectDriftSchema = Type.Union([
   Type.Object({ supported: Type.Literal(false) }),
@@ -417,6 +432,7 @@ export const ProjectControlSchemas = {
         port: Type.Number(),
         listening: Type.Boolean(),
         checked: Type.Boolean(),
+        loopbackOnly: Type.Optional(Type.Boolean()),
         serviceId: Type.Optional(Type.String()),
         serviceName: Type.Optional(Type.String()),
         skippedReason: Type.Optional(Type.String()),

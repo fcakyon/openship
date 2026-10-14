@@ -19,6 +19,7 @@
     "---Operate---",
     "logs-monitoring",
     "jobs",
+    "actions",
     "backups-restore",
     "custom-servers",
     "mcp-clusters-and-scaling",
@@ -37,6 +38,7 @@
     "teams-members",
     "email-webmail",
     "billing",
+    "cloud-workspaces",
     "---Extend Openship---",
     "add-an-app"
   ]

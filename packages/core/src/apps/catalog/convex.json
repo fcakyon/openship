@@ -87,6 +87,9 @@
   "management": {
     "kind": "schema"
   },
+  "installLayout": {
+    "settings": "split"
+  },
   "prepare": [
     {
       "service": "backend",
@@ -151,7 +154,7 @@
           "key": "INSTANCE_NAME",
           "service": "backend",
           "label": "Instance name",
-          "help": "Sets the deployment name. Changing it AFTER the first deploy invalidates the admin key and locks the dashboard/CLI out — safest to set it here, at install.",
+          "help": "Used by the Convex dashboard and CLI. Changing it after deployment invalidates the admin key.",
           "type": "text",
           "default": "convex-self-hosted",
           "advanced": true,
@@ -170,5 +173,22 @@
         }
       ]
     }
-  ]
+  ],
+  "marketplace": {
+    "features": [
+      {
+        "title": "Reactive backend",
+        "description": "Keep client queries in sync with changing data."
+      },
+      {
+        "title": "Developer dashboard",
+        "description": "Manage the backend through its included dashboard."
+      },
+      {
+        "title": "Persistent database",
+        "description": "Store backend data in a persistent volume."
+      }
+    ],
+    "articleFile": "articles/convex.md"
+  }
 }

@@ -9,7 +9,7 @@ import type {
   WorkloadType,
   DeploymentHistoryQuery,
 } from "@repo/core";
-import type { DeploymentPage, RollbackCapacity } from "@repo/contracts";
+import type { DeploymentPage, ProjectControlOperations, RollbackCapacity } from "@repo/contracts";
 import { endpoints } from "./endpoints";
 import type { ReleaseImageSource } from "../release-image-source";
 import {
@@ -20,6 +20,9 @@ import {
 /* ------------------------------------------------------------------ */
 /*  Projects API                                                      */
 /* ------------------------------------------------------------------ */
+
+/** Source drift computed by the engine's shared update service. */
+export type ProjectUpdateStatus = Awaited<ReturnType<ProjectControlOperations["getCommitStatus"]>>;
 
 /**
  * One thing waiting on a human. Mirrors `PendingAction` in the API's
@@ -61,10 +64,13 @@ export type RollbackCapacityUI = RollbackCapacity;
 /** Build + runtime options accepted by POST /:id/options (updateOptions). All
  *  optional — only the fields sent are written. Mirrors the backend allowlist. */
 export interface ProjectOptionsBody {
+  githubChecks?: import("@repo/core").GitHubDeploymentChecks | null;
   gitBranch?: string;
   framework?: string;
   packageManager?: string;
   buildImage?: string;
+  runtimeVersion?: string | null;
+  runtimeImage?: string | null;
   installCommand?: string;
   buildCommand?: string;
   startCommand?: string;
@@ -150,6 +156,8 @@ export interface ScanProjectResponse {
   startCommand: PrepareProjectResponse["startCommand"];
   releaseCommands?: PrepareProjectResponse["releaseCommands"];
   buildImage: PrepareProjectResponse["buildImage"];
+  runtimeVersion?: string | null;
+  runtimeImage?: string | null;
   outputDirectory: PrepareProjectResponse["outputDirectory"];
   rootDirectory: PrepareProjectResponse["rootDirectory"];
   productionPaths: PrepareProjectResponse["productionPaths"];
@@ -245,7 +253,9 @@ export const projectsApi = {
 
   /** Create or update a project (mandatory before build access) */
   ensure: (body: {
+    githubChecks?: import("@repo/core").GitHubDeploymentChecks | null;
     projectId?: string;
+    serverId?: string;
     name: string;
     /** Rollback retention picked in the wizard before the project existed.
      *  `null` window inherits the instance default. */
@@ -269,6 +279,8 @@ export const projectsApi = {
     composePath?: string;
     startCommand?: string;
     buildImage?: string;
+    runtimeVersion?: string | null;
+    runtimeImage?: string | null;
     port?: number;
     publicEndpoints?: Array<{
       port?: number;
@@ -307,6 +319,7 @@ export const projectsApi = {
       prepareCommand?: string;
     };
     /** Routing config parsed from the repo's vercel.json (opaque passthrough). */
+    cloudStaticHosting?: "pages" | "server";
     routingConfig?: RoutingConfig | null;
     /**
      * Deploy-time readiness gate. Omitted/null = OFF (the default) — the deploy
@@ -486,28 +499,9 @@ export const projectsApi = {
   unbindObjectStorage: (id: string | number) =>
     api.delete<{ data: { removed: boolean } }>(endpoints.projects.storage(id)),
 
-  /** Source-drift status for the "project outdated" banner. `mode` discriminates:
-   *  "commit" (git HEAD vs deployed sha) or "release" (newest advertised version
-   *  vs the deployed release version). */
+  /** Source drift for a project's update indicator and deployment banner. */
   getCommitStatus: (id: string | number) =>
-    api.get<{
-      data: {
-        supported: boolean;
-        mode?: "commit" | "release";
-        behind?: boolean;
-        /** True when the latest commit/version is already building/deploying. */
-        latestInProgress?: boolean;
-        /* commit mode */
-        branch?: string;
-        latestSha?: string | null;
-        latestMessage?: string | null;
-        deployedSha?: string | null;
-        /* release mode */
-        latestVersion?: string | null;
-        currentVersion?: string | null;
-        pinned?: boolean;
-      };
-    }>(`projects/${id}/commit-status`),
+    api.get<{ data: ProjectUpdateStatus }>(`projects/${id}/commit-status`),
 
   /** Enable or disable a project */
   toggle: (id: string | number, enable: boolean) =>

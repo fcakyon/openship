@@ -1,8 +1,9 @@
 "use client";
 
+import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
 import { Icon as UiIcon } from "@repo/ui/icons";
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback } from "react";
 import { useI18n, interpolate } from "@/components/i18n-provider";
 import { RepositoryBranchSelect } from "@/components/github/RepositoryBranchSelect";
 import DropdownMenu from "@/components/ui/DropdownMenu";
@@ -152,7 +153,7 @@ const ComposeChecklist: React.FC = () => {
 
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
-const Sidebar: React.FC = () => {
+const Sidebar: React.FC<{ destinationReady: boolean }> = ({ destinationReady }) => {
   const { config, state, updateConfig, startDeployment, rescanWithBranch, isRescanning } =
     useDeployment();
   const { t } = useI18n();
@@ -223,14 +224,14 @@ const Sidebar: React.FC = () => {
   }, [startDeployment, router]);
 
   const continueDeploy = useCallback(async (overrides?: { buildStrategy?: BuildStrategy }) => {
-    // Pre-deploy DNS gate (self-hosted custom domain): surface the records to add
+    // Pre-deploy DNS gate (custom domains): surface the records to add
     // BEFORE the deploy so DNS is pointed when the first-deploy SSL attempt runs.
     // A failed attempt just marks the domain Action Required — never blocks the
     // deploy. Informational-blocking: Deploy proceeds, Cancel aborts.
-    let dnsTargets = selfHosted ? deploymentDnsTargets(config) : [];
+    let dnsTargets = deploymentDnsTargets(config);
     if (dnsTargets.length > 0) {
       if (config.projectId) {
-        const projectInfo = await projectsApi.getInfo(config.projectId).catch(() => null);
+        const projectInfo = await projectsApi.getInfo(config.projectId).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "dashboard/app/(dashboard)/(deployment)/deploy/[slug]/components/Sidebar"); return null; });
         const domainRows = Array.isArray(projectInfo?.data?.project?.domains)
           ? projectInfo.data.project.domains
           : [];
@@ -249,14 +250,17 @@ const Sidebar: React.FC = () => {
             onCancel={() => hideModal(modalId)}
           />
         ),
+        width: "100%",
         maxWidth: "560px",
+        showCloseButton: false,
       });
       return;
     }
     await doDeploy(overrides);
-  }, [doDeploy, selfHosted, config, showModal, hideModal]);
+  }, [doDeploy, config, showModal, hideModal]);
 
   const handleDeploy = useCallback(async () => {
+    if (!destinationReady) return;
     // TODO: temporary desktop gate (useLocalDeployGate). Desktop mode controls
     // remote servers; the workload can't run on this machine yet. Scoped to NEW
     // projects on purpose — a project that already lives locally stays fully
@@ -376,7 +380,7 @@ const Sidebar: React.FC = () => {
     }
 
     await continueDeploy(buildStrategyOverride ? { buildStrategy: buildStrategyOverride } : undefined);
-  }, [baseDomain, canConnectCloud, cloneGate.preference, config.buildStrategy, config.deployTarget, config.owner, config.projectId, config.serverId, config.publicEndpoints, config.services, continueDeploy, hideModal, isServices, localDeployGate, requireCloud, selfHosted, showModal, showToast, updateConfig, t]);
+  }, [baseDomain, canConnectCloud, cloneGate.preference, config.buildStrategy, config.deployTarget, config.owner, config.projectId, config.serverId, config.publicEndpoints, config.services, continueDeploy, destinationReady, hideModal, isServices, localDeployGate, requireCloud, selfHosted, showModal, showToast, updateConfig, t]);
 
   // Edit mode (opened from project Settings with ?mode=config): the
   // finish button SAVES the config to the project and returns — no deploy, no
@@ -386,6 +390,7 @@ const Sidebar: React.FC = () => {
   const isConfigMode = searchParams.get("mode") === "config";
   const [isSaving, setIsSaving] = React.useState(false);
   const handleSave = useCallback(async () => {
+    if (!destinationReady) return;
     setIsSaving(true);
     try {
       const projectId = await startDeployment({ saveConfigOnly: true });
@@ -398,7 +403,7 @@ const Sidebar: React.FC = () => {
     } finally {
       setIsSaving(false);
     }
-  }, [startDeployment, router]);
+  }, [startDeployment, router, selfHosted, destinationReady]);
 
   return (
     <div className="lg:sticky lg:top-6 h-fit space-y-4">
@@ -528,7 +533,7 @@ const Sidebar: React.FC = () => {
       {isConfigMode ? (
         <button
           onClick={handleSave}
-          disabled={isSaving || isRescanning}
+          disabled={isSaving || isRescanning || !destinationReady}
           className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-primary text-primary-foreground text-sm font-medium rounded-xl hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/25 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSaving ? (
@@ -546,7 +551,7 @@ const Sidebar: React.FC = () => {
       ) : (
         <button
           onClick={handleDeploy}
-          disabled={state.isDeploying || isRescanning}
+          disabled={state.isDeploying || isRescanning || !destinationReady}
           className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-primary text-primary-foreground text-sm font-medium rounded-xl hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/25 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {state.isDeploying ? (

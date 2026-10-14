@@ -1,5 +1,7 @@
 "use client";
+import { ProjectActions } from "@/components/actions/ProjectActions";
 
+import { reportCaughtError as observeCaughtError, diagnostics as errorDiagnostics } from "@repo/core/diagnostics";
 import { Icon as UiIcon } from "@repo/ui/icons";
 
 import { DomainSettings } from "../components/DomainSettings";
@@ -262,6 +264,7 @@ const EnvironmentSwitcher = ({ disabled = false }: { disabled?: boolean }) => {
         router.push(environmentWizardHref(created));
       }
     } catch (error) {
+      observeCaughtError(error, "dashboard/app/(dashboard)/projects/[id]/[[...slug]]/page");
       const message = environmentErrorMessage(error, t.projects.env.failedCreateEnvironment);
       showToast(message, "error", t.projects.env.toastEnvironmentTitle);
     } finally {
@@ -290,6 +293,7 @@ const EnvironmentSwitcher = ({ disabled = false }: { disabled?: boolean }) => {
         router.push(environmentWizardHref(created));
       }
     } catch (error) {
+      observeCaughtError(error, "dashboard/app/(dashboard)/projects/[id]/[[...slug]]/page");
       const message = environmentErrorMessage(error, t.projects.env.failedCreateEnvironment);
       showToast(message, "error", t.projects.env.toastEnvironmentTitle);
     } finally {
@@ -561,19 +565,39 @@ const ProjectSettingsContent = () => {
   const { showToast } = useToast();
   const { showModal, hideModal } = useModal();
   const router = useRouter();
+  const viewedProjectId = useRef<string | null>(null);
+  const finishedDeletions = useRef(new Set<string>());
+
+  useEffect(() => {
+    viewedProjectId.current = id;
+    return () => {
+      viewedProjectId.current = null;
+    };
+  }, [id]);
 
   const finishEnvironmentDeletion = useCallback(
     (deletedId: string) => {
-      const nextEnvironment = firstProjectEnvironment(
-        removeProjectEnvironment(environments, deletedId),
-      );
-      // Schedule navigation before invalidating the mounted deleted id. Its
-      // expected 404 refetch must not win a race against the sibling route.
-      router.replace(
-        nextEnvironment
-          ? projectEnvironmentHref(nextEnvironment.id, activeTab)
-          : "/",
-      );
+      // The DELETE response and the completion poll can settle together.
+      if (finishedDeletions.current.has(deletedId)) return;
+      finishedDeletions.current.add(deletedId);
+      const projectPath = `/projects/${encodeURIComponent(deletedId)}`;
+      const pathname = window.location.pathname;
+      // A background deletion still invalidates its caches, but only owns
+      // navigation while its resource is being viewed. Check the URL too:
+      // navigation can begin before Next unmounts or replaces this page.
+      if (
+        viewedProjectId.current === deletedId &&
+        (pathname === projectPath || pathname.startsWith(`${projectPath}/`))
+      ) {
+        const nextEnvironment = firstProjectEnvironment(
+          removeProjectEnvironment(environments, deletedId),
+        );
+        // Navigate before invalidation so the deleted id's expected 404 does
+        // not compete with the surviving environment's route.
+        router.replace(
+          nextEnvironment ? projectEnvironmentHref(nextEnvironment.id, activeTab) : "/",
+        );
+      }
       removeEnvironment(deletedId);
       invalidateSidebarNavCounts();
     },
@@ -584,21 +608,33 @@ const ProjectSettingsContent = () => {
   // (server flag or optimistic), poll for completion so a finished teardown
   // (row gone) navigates away instead of leaving a stale "Deleting" page open.
   // Read-only — never overwrites the in-flight optimistic state.
-  const isDeleting = getProjectStatus(projectData) === "deleting";
+  const isDeleting = projectData.id === id && getProjectStatus(projectData) === "deleting";
   useEffect(() => {
-    if (!id || !isDeleting) return;
+    if (!id || !isDeleting || finishedDeletions.current.has(id)) return;
+    let active = true;
+    let inFlight = false;
     const iv = setInterval(async () => {
+      if (!active || inFlight || finishedDeletions.current.has(id)) return;
+      inFlight = true;
       try {
         await projectsApi.getInfo(id);
       } catch (err) {
+        observeCaughtError(err, "dashboard/app/(dashboard)/projects/[id]/[[...slug]]/page");
+        if (!active || finishedDeletions.current.has(id)) return;
         if (err instanceof ApiError && err.status === 404) {
+          active = false;
           clearInterval(iv);
           showToast(t.projects.delete.alreadyDeleted, "success");
           finishEnvironmentDeletion(id);
         }
+      } finally {
+        inFlight = false;
       }
     }, 3000);
-    return () => clearInterval(iv);
+    return () => {
+      active = false;
+      clearInterval(iv);
+    };
   }, [finishEnvironmentDeletion, id, isDeleting, showToast, t.projects.delete.alreadyDeleted]);
 
   const handleDeleteProject = async (
@@ -610,11 +646,15 @@ const ProjectSettingsContent = () => {
     force = false,
     forceOrphan = false,
   ) => {
+    const deletedId = projectData.id;
+    const setDeletionState = (deletedAt: string | null) => {
+      setProjectData((prev) => (prev.id === deletedId ? { ...prev, deletedAt } : prev));
+    };
     // Optimistic - immediately show "Deleting" status
-    setProjectData((prev: any) => ({ ...prev, deletedAt: new Date().toISOString() }));
+    setDeletionState(new Date().toISOString());
 
     try {
-      const response = await projectsApi.delete(projectData.id, {
+      const response = await projectsApi.delete(deletedId, {
         wipeVolumes,
         recordOnly,
         force,
@@ -665,14 +705,14 @@ const ProjectSettingsContent = () => {
             t.projects.delete.unlinkedTitle,
           );
         }
-        finishEnvironmentDeletion(projectData.id);
+        finishEnvironmentDeletion(deletedId);
         return;
       }
       // 207: rowDeleted=true but unrecoverable steps surfaced. Toast as
       // "success" because the row IS gone — the warning content lives in
       // the title + body. router.push so the user doesn't see a ghost.
       if (Array.isArray(response.unrecoverable) && response.unrecoverable.length > 0) {
-        console.warn("[delete-project] partial cleanup", response.unrecoverable);
+        errorDiagnostics.warn("dashboard/app/(dashboard)/projects/[id]/[[...slug]]/page", "[delete-project] partial cleanup", response.unrecoverable);
         showToast(
           interpolate(t.projects.delete.partialCleanup, {
             count: String(response.unrecoverable.length),
@@ -680,11 +720,11 @@ const ProjectSettingsContent = () => {
           "success",
           t.projects.delete.partialCleanupTitle,
         );
-        finishEnvironmentDeletion(projectData.id);
+        finishEnvironmentDeletion(deletedId);
         return;
       }
       // Defensive: 2xx with ok=false but no unrecoverable list. Treat as failure.
-      setProjectData((prev: any) => ({ ...prev, deletedAt: null }));
+      setDeletionState(null);
       showToast(
         response.message || response.error || t.projects.delete.failed,
         "error",
@@ -695,12 +735,12 @@ const ProjectSettingsContent = () => {
       // Run the same state/cache/navigation transition as every other success.
       if (err instanceof ApiError && err.status === 404) {
         showToast(t.projects.delete.alreadyDeleted, "success");
-        finishEnvironmentDeletion(projectData.id);
+        finishEnvironmentDeletion(deletedId);
         return;
       }
 
       // Actual failure: the project still exists, so undo the optimistic status.
-      setProjectData((prev: any) => ({ ...prev, deletedAt: null }));
+      setDeletionState(null);
 
       if (err instanceof ApiError && err.status === 409) {
         const body = (err.body ?? {}) as {
@@ -742,8 +782,10 @@ const ProjectSettingsContent = () => {
         // now when the server is REACHABLE but a destroy kept failing —
         // `canForceOrphan` lets the user drop the row anyway and let GC reclaim
         // the leaked resources later.
-        const reasons = (body.unrecoverable ?? []).map((u) => u.step).join(", ");
-        console.error("[delete-project] teardown failed", body.unrecoverable);
+        const reasons = [
+          ...new Set((body.unrecoverable ?? []).map((u) => u.error?.trim() || u.step)),
+        ].join(" · ");
+        errorDiagnostics.error("dashboard/app/(dashboard)/projects/[id]/[[...slug]]/page", "[delete-project] teardown failed", body.unrecoverable, err);
         // The source teardown couldn't complete. Rather than a jarring
         // window.confirm (or silently reverting to a plain "Draft"), surface a
         // themed module offering the storage-only delete (forceOrphan) — atomic
@@ -826,6 +868,8 @@ const ProjectSettingsContent = () => {
         return <ServicesTab />;
       case "domains":
         return <DomainSettings />;
+      case "actions":
+        return <ProjectActions projectId={id} />;
       case "deployments":
         return <Deployments />;
       case "health":
@@ -945,24 +989,10 @@ const ProjectSettingsContent = () => {
     (status === "deleting" && !projectData.activeDeploymentId);
   // Configured drafts can inspect their services in Topology before deploying.
   // Other draft tabs keep the focused setup screen, including stale runtime links.
-  if (isNeverDeployed && activeTab !== "topology") {
+  if (isNeverDeployed && activeTab !== "topology" && activeTab !== "actions") {
     return (
-      <PageContainer>
-        <div className="mb-6">
-          <div className="flex items-center space-x-2 rtl:space-x-reverse text-sm text-muted-foreground mb-2">
-            <Link href="/" className="hover:text-foreground transition-colors font-medium">
-              {t.projects.detail.breadcrumbDashboard}
-            </Link>
-            <span>/</span>
-            <span className="text-foreground font-medium">{projectData.name || t.projects.detail.projectFallback}</span>
-          </div>
-          {/* Logo intentionally omitted here — it lives in the DraftProjectView
-              hero card below; showing it in both duplicates it. */}
-          <h1 className="text-2xl font-semibold text-foreground truncate">
-            {projectData.name || t.projects.detail.projectFallback}
-          </h1>
-        </div>
-        <DraftProjectView onDeleteProject={() => handleDeleteProject()} />
+      <PageContainer className="@container/project-draft">
+        <DraftProjectView onDeleteProject={handleDeleteProject} />
       </PageContainer>
     );
   }

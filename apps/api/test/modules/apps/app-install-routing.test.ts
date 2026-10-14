@@ -36,6 +36,7 @@ vi.mock("@repo/db", () => ({
     },
     service: {
       listByProject: listServicesMock,
+      seedDraftAppResourceDefaults: async () => [],
     },
     customAppTemplate: {
       findByAppId: async () => undefined,
@@ -56,6 +57,10 @@ vi.mock("@repo/platform/engine/modules/services/service.service", () => ({
 
 vi.mock("@repo/platform/engine/lib/cloud/require-cloud", () => ({
   requireCloud: requireCloudMock,
+}));
+
+vi.mock("@repo/platform/engine/lib/cloud-workspace-scope", () => ({
+  workspaceForServer: async () => ({ workspace: { id: "cloud-workspace" }, server: { id: "cloud-server" } }),
 }));
 
 import {
@@ -109,7 +114,128 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 });
 
+it("installs generic Cloud webmail with encrypted client secrets and no managed-mail service", async () => {
+  listServicesMock.mockResolvedValue([{ id: "svc-webmail", name: "webmail" }]);
+  await installApp(ctx, {
+    templateId: "webmail",
+    serverId: "cloud-server",
+    deployTarget: "cloud",
+    routes: [{ service: "webmail", port: 4080, mode: "free" }],
+  });
+  expect(createServiceMock).toHaveBeenCalledOnce();
+  expect(createServiceMock.mock.calls[0]?.[2]).toMatchObject({
+    name: "webmail", image: "ghcr.io/oblien/openship-webmail:latest",
+  });
+  const vars = setEnvMock.mock.calls.find(call => call[2] === "svc-webmail")?.[3].vars;
+  for (const key of ["SESSION_ENCRYPTION_KEY", "BRANDING_ADMIN_TOKEN"]) {
+    expect(vars).toContainEqual({ key, isSecret: true, value: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  }
+});
+
+it.each(["self-hosted", "cloud"] as const)(
+  "installs WordPress from its official image with runtime setup and encrypted credentials (%s)",
+  async (mode) => {
+    listServicesMock.mockResolvedValue([
+      { id: "svc-wordpress", name: "wordpress" },
+      { id: "svc-wordpress-db", name: "wordpress-db" },
+    ]);
+    await installApp(ctx, {
+      templateId: "wordpress",
+      ...(mode === "cloud" ? { serverId: "cloud-server", deployTarget: "cloud" as const } : {}),
+      config: {
+        OPENSHIP_ADMIN_EMAIL: "owner@example.com",
+        OPENSHIP_SITE_TITLE: "Our site",
+        OPENSHIP_ADMIN_USER: "owner",
+      },
+      routes: [
+        { service: "wordpress", port: 80, mode: "custom", customDomain: "site.example.com" },
+      ],
+    });
+    const writes = (id: string) =>
+      setEnvMock.mock.calls.find((call) => call[2] === id)?.[3].vars as Array<{
+        key: string;
+        value: string;
+        isSecret: boolean;
+      }>;
+    const wordpress = writes("svc-wordpress");
+    expect(wordpress).toEqual(
+      expect.arrayContaining([
+        { key: "OPENSHIP_ADMIN_EMAIL", value: "owner@example.com", isSecret: false },
+        { key: "OPENSHIP_SITE_TITLE", value: "Our site", isSecret: false },
+        { key: "OPENSHIP_ADMIN_USER", value: "owner", isSecret: false },
+      ]),
+    );
+    const dbPassword = writes("svc-wordpress-db").find(
+      (field) => field.key === "MARIADB_PASSWORD",
+    )!;
+    expect(wordpress.find((field) => field.key === "WORDPRESS_DB_PASSWORD")).toMatchObject({
+      value: dbPassword.value,
+      isSecret: true,
+    });
+    expect(dbPassword.isSecret).toBe(true);
+    expect(wordpress.find((field) => field.key === "OPENSHIP_ADMIN_PASSWORD")).toMatchObject({
+      isSecret: true,
+      value: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(payloadFor("wordpress-db")).toMatchObject({
+      exposed: false,
+      publicEndpoints: [],
+      ports: [],
+    });
+    const service = createServiceMock.mock.calls.find((call) => call[2]?.name === "wordpress")![2];
+    expect(service).toMatchObject({
+      image: "wordpress:7.1.3-php8.3-apache",
+      commandArgv: ["sh", "/etc/openship/wordpress-start.sh", "apache2-foreground"],
+      advanced: { files: [expect.objectContaining({ path: "/etc/openship/wordpress-start.sh" })] },
+    });
+    expect(service.advanced.build).toBeUndefined();
+    expect(JSON.stringify(service.advanced.files)).not.toContain(dbPassword.value);
+    expect(JSON.stringify(service.advanced.files)).not.toContain(
+      wordpress.find((field) => field.key === "OPENSHIP_ADMIN_PASSWORD")!.value,
+    );
+  },
+);
+
+it("installs Odoo's startup helper as runtime configuration without an image build", async () => {
+  listServicesMock.mockResolvedValue([
+    { id: "svc-odoo", name: "odoo" },
+    { id: "svc-odoo-db", name: "odoo-db" },
+  ]);
+  await installApp(ctx, {
+    templateId: "odoo",
+    config: { OPENSHIP_ADMIN_EMAIL: "owner@example.com" },
+  });
+  const service = createServiceMock.mock.calls.find((call) => call[2]?.name === "odoo")![2];
+  expect(service).toMatchObject({
+    image: "odoo:19.0-20260926",
+    commandArgv: ["python3", "/etc/openship/odoo-start.py"],
+    advanced: { files: [expect.objectContaining({ path: "/etc/openship/odoo-start.py" })] },
+  });
+  expect(service.advanced.build).toBeUndefined();
+  expect(payloadFor("odoo-db")).toMatchObject({ exposed: false, ports: [], publicEndpoints: [] });
+});
+
 describe("app install — routing comes from the operator's choice", () => {
+  it("persists Cloud Ghost without a domain as internal, and publishes only a chosen domain", async () => {
+    const input = { templateId: "ghost", serverId: "cloud-server" };
+    await installApp(ctx, { ...input, routes: [{ service: "ghost", port: 2368, mode: "port" }] });
+    expect(payloadFor("ghost")).toMatchObject({ exposed: false, publicEndpoints: [], ports: [] });
+    createServiceMock.mockClear();
+    await installApp(ctx, { ...input, routes: [{ service: "ghost", port: 2368, mode: "free" }] });
+    expect(payloadFor("ghost")).toMatchObject({
+      exposed: true,
+      ports: [],
+      publicEndpoints: [{ port: 2368, domainType: "free" }],
+    });
+    expect(payloadFor("ghost-db")).toMatchObject({ exposed: false, ports: [], publicEndpoints: [] });
+  });
+  it("keeps catalog resource recommendations advisory on self-hosted installs", async () => {
+    await installApp(ctx, { templateId: "supabase" });
+    expect(createServiceMock.mock.calls).toHaveLength(9);
+    expect(
+      createServiceMock.mock.calls.every((call) => call[2].advanced?.resources === undefined),
+    ).toBe(true);
+  });
   it("persists a custom domain and NO free route for the chosen endpoint", async () => {
     await install([
       { service: "backend", port: 3210, mode: "custom", customDomain: "API.Example.com" },
@@ -232,6 +358,16 @@ describe("app install — routing comes from the operator's choice", () => {
 });
 
 describe("installServicePorts", () => {
+  it("keeps Cloud No-domain endpoints private and removes stale host-port promises", () => {
+    const ghost = getAppTemplate("ghost")!.services!.find((svc) => svc.name === "ghost")!;
+    const routes = [{ service: "ghost", port: 2368, mode: "port" as const }];
+    expect(installServicePorts("ghost", ghost.ports, routes, ghost.ports, "cloud")).toEqual([]);
+    expect(
+      installServicePorts("ghost", ghost.ports, routes, ["0.0.0.0:8212:2368", "9000:9000"], "cloud"),
+    ).toEqual(["9000:9000"]);
+    expect(installServicePorts("ghost", ghost.ports, routes)).toEqual(["0.0.0.0:8212:2368"]);
+  });
+
   it("publishes Supabase Kong and gives its publicUrl token a real URL", () => {
     const kong = getAppTemplate("supabase")!.services!.find((svc) => svc.name === "kong")!;
     const ports = installServicePorts(kong.name, kong.ports, [

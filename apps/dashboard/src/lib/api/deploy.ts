@@ -1,4 +1,4 @@
-import { api } from "./client";
+import { api, type RequestOptions } from "./client";
 import type { DeploymentPage, ListDeploymentsInput } from "@repo/contracts";
 import { endpoints } from "./endpoints";
 import type {
@@ -128,6 +128,8 @@ export interface PrepareAppConfig {
   installCommand: string;
   startCommand: string;
   buildImage: string;
+  runtimeVersion?: string | null;
+  runtimeImage?: string | null;
   outputDirectory: string;
   rootDirectory: string;
   productionPaths: string[];
@@ -268,7 +270,7 @@ export const deployApi = {
    *  single-app, or the service id for a compose service) so it won't re-nag
    *  after a refresh. */
   skipPortCheck: (id: string, target: number | string) =>
-    api.post<any>(endpoints.deploy.skipPortCheck(id), { target }),
+    api.post<{ success: boolean }>(endpoints.deploy.skipPortCheck(id), { target }),
 
   /** Live, on-demand port-reachability audit of a PROJECT's active deployment
    *  (advisory) — powers the Domains tab's "port not reachable" hint. */
@@ -383,8 +385,8 @@ export const deployApi = {
   }) => api.post<any>(endpoints.deploy.buildAccess, payload),
 
   /** Poll build status */
-  getBuildStatus: (deploymentId: string) =>
-    api.get<any>(endpoints.deploy.buildStatus(deploymentId)),
+  getBuildStatus: (deploymentId: string, options?: RequestOptions) =>
+    api.get<any>(endpoints.deploy.buildStatus(deploymentId), options),
 
   /** Start a build by deployment ID */
   buildStart: (deployment_id: string) => api.post<any>(endpoints.deploy.buildStart(deployment_id)),

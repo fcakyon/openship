@@ -8,6 +8,7 @@
  * the host that owns the selected project.
  */
 
+import { diagnostics as errorDiagnostics } from "@repo/core/diagnostics";
 import {
   DockerRuntime,
   getPlatform,
@@ -32,7 +33,7 @@ export interface BuildCacheTarget {
 
 type CacheProject = Pick<
   Project,
-  "id" | "organizationId" | "cloudWorkspaceId" | "serverId" | "activeDeploymentId"
+  "id" | "organizationId" | "workspaceId" | "serverId" | "activeDeploymentId"
 > & { clusterId?: string | null };
 
 interface BuildCacheRuntime {
@@ -150,7 +151,7 @@ export async function clearProjectBuildCache(
   deps: BuildCacheGcDependencies = defaultDependencies,
 ): Promise<BuildCachePruneResult & { target: "local" | "server"; serverId: string | null }> {
   const resolved = await deps.resolveProjectTarget(project);
-  if (resolved.deployTarget === "cloud" || project.cloudWorkspaceId) {
+  if (resolved.deployTarget === "cloud" || project.workspaceId) {
     throw new AppError(
       "Cloud build cache is managed by the cloud runtime and cannot be cleared from this host.",
       409,
@@ -218,7 +219,7 @@ export async function runBuildCacheGcSweep(
     targets = collectBuildCacheTargets(await deps.listServers(), deps.hasLocalDockerRuntime());
   } catch (err) {
     summary.errors += 1;
-    console.error(`[build-cache-gc] target discovery failed: ${safeErrorMessage(err)}`);
+    errorDiagnostics.error("platform/engine/modules/deployments/build-cache-gc", `[build-cache-gc] target discovery failed: ${safeErrorMessage(err)}`, err);
     return summary;
   }
 
@@ -240,7 +241,7 @@ export async function runBuildCacheGcSweep(
       }
     } catch (err) {
       summary.errors += 1;
-      console.error(`[build-cache-gc] ${target.key} sweep failed: ${safeErrorMessage(err)}`);
+      errorDiagnostics.error("platform/engine/modules/deployments/build-cache-gc", `[build-cache-gc] ${target.key} sweep failed: ${safeErrorMessage(err)}`, err);
     }
   }
   return summary;

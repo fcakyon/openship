@@ -95,7 +95,7 @@ describe("tracked SSL provisioning progress", () => {
     await tracked.provisionCert(missing.domain);
     expect(lines.some(line => line.includes("DNS problem: NXDOMAIN"))).toBe(true);
     expect(lines.join(" ")).not.toContain("SSL certificate issued");
-    expect(repos.domain.recordSslFailure).toHaveBeenCalledWith("dom_1", "DNS problem: NXDOMAIN", true);
+    expect(repos.domain.recordSslFailure).toHaveBeenCalledWith("dom_1", "DNS problem: NXDOMAIN", "invalid");
   });
 
   it("does not add a progress read when no logger is attached", async () => {
@@ -165,6 +165,70 @@ const customSvc = {
 } as any;
 
 describe("buildProjectRouteDomains", () => {
+  it("keeps a Cloud web endpoint when local managed routing is disabled", () => {
+    const input = {
+      project: { slug: "cloud-app" } as any,
+      projectDomains: [],
+      publicEndpoints: [{ domain: "cloud-app", domainType: "free" as const, port: 3000 }],
+      runtimeName: "docker",
+      usesManagedRouting: false,
+      isStatic: false,
+    };
+    const planned = buildProjectRouteDomains({ ...input, certificateManagement: "provider" });
+    expect(planned).toHaveLength(1);
+    expect(planned[0]).toMatchObject({
+      hostname: `cloud-app.${getRoutingBaseDomain()}`,
+      targetPort: 3000,
+      requiresSslTooling: false,
+      provisionSsl: false,
+    });
+    expect(buildProjectRouteDomains(input)).toEqual([]);
+  });
+
+  it.each([true, false])(
+    "routes container-served static roots during deploy and retry (endpoints=%s)",
+    (withEndpoints) => {
+      const planned = buildProjectRouteDomains({
+        project: { slug: "static-site" } as any,
+        projectDomains: [
+          {
+            hostname: "static-site.opsh.io",
+            targetPath: "/",
+            targetPort: null,
+            domainType: "free",
+            verified: true,
+            isPrimary: true,
+          } as any,
+        ],
+        managedSlug: "static-site",
+        ...(withEndpoints
+          ? {
+              publicEndpoints: [
+                { domain: "static-site", domainType: "free" as const, targetPath: "/" },
+              ],
+            }
+          : {}),
+        runtimeName: "docker",
+        certificateManagement: "provider",
+        usesManagedRouting: true,
+        isStatic: false,
+        staticContainerPort: 3000,
+      });
+      expect(planned).toHaveLength(1);
+      expect(planned[0]).toMatchObject({ hostname: "static-site.opsh.io", targetPort: 3000 });
+      expect(planned[0].targetPath).toBeUndefined();
+    },
+  );
+
+  it("does not turn stale paths on ordinary web apps into public ports", () => {
+    expect(resolveRouteDestination({ targetPath: "/", targetPort: null }, false)).toBeUndefined();
+    expect(resolveRouteDestination({ targetPath: "/docs" }, true, 3000)).toEqual({
+      targetPath: "/docs",
+    });
+    expect(() => resolveRouteDestination({ targetPath: "/docs" }, false, 3000)).toThrow("root (/)");
+    expect(resolveRouteDestination({}, false, 3000)).toBeUndefined();
+  });
+
   it("uses public endpoints as the only app routing source when they are provided", () => {
     const planned = buildProjectRouteDomains({
       project: { slug: "my-app" } as any,
@@ -685,7 +749,7 @@ describe("createTrackedSslProvider (deploy-time issuance)", () => {
     expect(repos.domain.recordSslFailure).toHaveBeenCalledWith(
       "dom_1",
       expect.stringContaining("DNS is not pointing here"),
-      true,
+      "invalid",
     );
     expect(repos.domain.markVerifiedActive).not.toHaveBeenCalled();
   });
@@ -706,7 +770,7 @@ describe("createTrackedSslProvider (deploy-time issuance)", () => {
     expect(repos.domain.recordSslFailure).toHaveBeenCalledWith(
       "dom_1",
       expect.stringContaining("No usable HTTPS certificate"),
-      true,
+      "invalid",
     );
     expect(repos.domain.updateSsl).not.toHaveBeenCalled();
   });

@@ -444,6 +444,21 @@ export const AUDIT_EVENTS: Record<string, AuditEventDef> = {
     label: "Server reachable again",
     tone: "success",
   },
+  "migration.source_connected": {
+    category: "servers",
+    action: "connected the migration source",
+    label: "Migration source connected",
+    tone: "info",
+    description:
+      "An external SSH server was connected for importing projects. It cannot be used as a deployment destination.",
+  },
+  "migration.source_disconnected": {
+    category: "servers",
+    action: "disconnected the migration source",
+    label: "Migration source disconnected",
+    description:
+      "The stored migration connection was removed. The source server and its data are unchanged.",
+  },
   "server:write": {
     category: "servers",
     action: "changed the server",
@@ -726,6 +741,21 @@ export const AUDIT_EVENTS: Record<string, AuditEventDef> = {
     tone: "warning",
     description: "A database dump from another instance was loaded in.",
   },
+  "instance.move_requested": {
+    category: "security",
+    action: "requested a control-plane move to another instance",
+    label: "Control-plane move requested",
+    tone: "warning",
+    description:
+      "An administrator requested a transfer of instance data and control to another instance.",
+  },
+  "instance.server_move_requested": {
+    category: "security",
+    action: "requested a control-plane move to a server",
+    label: "Server control-plane move requested",
+    tone: "warning",
+    description: "An administrator requested a hosted control plane on a selected server.",
+  },
   // Written by the audit module itself. "disabled" is recorded before the switch
   // flips, so turning recording off always leaves this one row behind.
   "audit.disabled": {
@@ -761,6 +791,13 @@ export const AUDIT_EVENTS: Record<string, AuditEventDef> = {
     label: "Spending cap reached",
     tone: "danger",
     description: "Cloud resources may have been paused — review billing.",
+  },
+  "billing.credit_low": {
+    category: "billing",
+    action: "approached the credit limit for",
+    label: "Cloud credits running low",
+    tone: "warning",
+    description: "Review the remaining allowance before Cloud workloads are interrupted.",
   },
   "billing.credit_exhausted": {
     category: "billing",
@@ -942,6 +979,13 @@ export const AUDIT_EVENTS: Record<string, AuditEventDef> = {
     action: "ran a GitHub admin action on",
     label: "GitHub admin action",
     tone: "warning",
+  },
+  "issues.history.clear": {
+    category: "system",
+    action: "cleared resolved monitoring history",
+    label: "Monitoring history cleared",
+    tone: "warning",
+    description: "Resolved incident history in this organization was removed. Active incidents remain.",
   },
   "notification_channel.created": {
     category: "system",

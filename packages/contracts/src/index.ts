@@ -1,4 +1,5 @@
 export * from "./deployments";
+export * from "./cloud-support";
 export * from "./deployment-resources";
 export * from "./deployment-controls";
 export * from "./validation";
@@ -36,6 +37,8 @@ export * from "./project-routing";
 export * from "./project-logs";
 export * from "./project-transfer";
 export * from "./migration";
+export * from "./migration-types";
+export * from "./migration-operations";
 export * from "./credential-inputs";
 export * from "./credentials";
 export * from "./servers";
@@ -50,6 +53,8 @@ export * from "./backups";
 export * from "./job-inputs";
 
 export * from "./jobs";
+export * from "./actions";
+export * from "./action-billing";
 
 export * from "./analytics";
 
@@ -80,6 +85,8 @@ export * from "./github";
 export * from "./notices";
 
 export * from "./billing";
+export * from "./cloud-workspaces";
+export * from "./server-managed";
 
 export * from "./billing-inputs";
 
@@ -89,3 +96,9 @@ export * from "./cluster-storage";
 export * from "./project-cluster";
 export * from "./cluster-database";
 export * from "./mail-inputs";
+export * from "./mail";
+export * from "./cloud-analytics";
+export * from "./terminal";
+export * from "./instance";
+
+export * from "./action-routes";

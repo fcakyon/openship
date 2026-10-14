@@ -5,10 +5,12 @@ import { fileURLToPath } from "node:url";
 import { cliSurface, docsDirectory } from "./docs-surface.mjs";
 
 const categories = {
-  Connect: ["login", "logout", "context", "token", "api"],
+  Connect: ["login", "logout", "context", "token", "access", "credential", "github", "api"],
   Deploy: ["init", "config", "deploy", "deployment", "logs"],
-  Applications: ["project", "app", "service", "domain"],
-  Infrastructure: ["job", "server", "backup", "edge", "mail", "system"],
+  Applications: ["project", "app", "service", "domain", "dns"],
+  Operations: ["monitoring", "notification", "webhook", "audit", "analytics", "settings"],
+  Cloud: ["billing"],
+  Infrastructure: ["job", "server", "backup", "edge", "mail", "migration", "system"],
   "Local installation": [
     "up",
     "stop",
@@ -23,10 +25,22 @@ const categories = {
   Shell: ["completion"],
 };
 const guides = {
+  billing: "cloud",
+  github: "access",
+  settings: "operations",
+  analytics: "operations",
+  migration: "self-host",
   login: "access",
   logout: "access",
   context: "access",
   token: "access",
+  access: "access",
+  credential: "access",
+  dns: "projects",
+  monitoring: "operations",
+  notification: "operations",
+  webhook: "operations",
+  audit: "operations",
   api: "access",
   init: "projects",
   config: "projects",

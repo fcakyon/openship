@@ -6,6 +6,10 @@
  */
 
 export const endpoints = {
+  instance: {
+    status: "system/instance",
+    action: (action: "preflight" | "offer" | "move" | "provision" | "resume" | "cancel" | "pair" | "connect" | "disconnect" | "return") => `system/instance/${action}`,
+  },
   /* ---------------------------------------------------------------- */
   /*  Projects                                                        */
   /* ---------------------------------------------------------------- */
@@ -196,6 +200,18 @@ export const endpoints = {
     run: (key: string) => `jobs/${encodeURIComponent(key)}/run`,
     runDetail: (runId: string) => `jobs/runs/${encodeURIComponent(runId)}`,
     runStream: (runId: string) => `jobs/runs/${encodeURIComponent(runId)}/stream`,
+  },
+
+  actions: {
+    workflows: "actions/workflows",
+    workflow: (id: string) => `actions/workflows/${encodeURIComponent(id)}`,
+    runs: "actions/runs",
+    run: (id: string) => `actions/runs/${encodeURIComponent(id)}`,
+    runners: "actions/runners",
+    runner: (id: string) => `actions/runners/${encodeURIComponent(id)}`,
+    events: (id: string) => `actions/jobs/${encodeURIComponent(id)}/events`,
+    discover: "actions/discover",
+    preview: "actions/preview",
   },
 
   /* ---------------------------------------------------------------- */
@@ -466,6 +482,9 @@ export const endpoints = {
   /*  Docker migration (inspect + adopt an existing Docker server)    */
   /* ---------------------------------------------------------------- */
   dockerMigration: {
+    sources: "migration/sources",
+    testSource: "migration/sources/test",
+    source: (id: string) => `migration/sources/${encodeURIComponent(id)}`,
     scan: "migration/scan",
     scanStream: "migration/scan/stream",
     revealEnv: "migration/reveal-env",
@@ -542,6 +561,7 @@ export const endpoints = {
   issues: {
     open: "issues",
     resolved: "issues?status=resolved",
+    clearHistory: "issues/history",
     summary: "issues/summary",
     health: "issues/health",
     healthScan: "issues/health/scan",
@@ -597,9 +617,21 @@ export const endpoints = {
   /*  Billing (Oblien-managed — SaaS + local proxy)                  */
   /* ---------------------------------------------------------------- */
   billing: {
+    actions: "billing/actions",
+    actionsPurchase: "billing/actions/purchase",
+    actionsCheckout: "billing/actions/checkout",
+    actionsResume: "billing/actions/checkout/resume",
+    checkouts: "billing/checkouts",
+    checkoutResume: "billing/checkout/resume",
+    checkoutCancel: "billing/checkout/cancel",
+    changePreview: "billing/subscription/change/preview",
+    change: "billing/subscription/change",
+    changeCancel: "billing/subscription/change/cancel",
+    customQuote: "billing/subscription/quote",
     checkout: "billing/checkout",
     plans: "billing/plans",
     state: "billing/state",
+    creditAlerts: "billing/credit-alerts",
     usage: "billing/usage",
     resources: "billing/resources",
     topupPacks: "billing/topup-packs",

@@ -1,5 +1,6 @@
 "use client";
 
+import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
 import { Icon as UiIcon, type IconName } from "@repo/ui/icons";
 
 import React, { useEffect, useState } from "react";
@@ -256,6 +257,7 @@ export function ServiceSettingsForm({ service, siblingServiceNames = [], onSubmi
     try {
       await onSubmit(payload);
     } catch (err) {
+      observeCaughtError(err, "dashboard/app/(dashboard)/projects/[id]/components/services/ServiceSettingsForm");
       setError(err instanceof Error ? err.message : f.errors.saveFailed);
     } finally {
       setSaving(false);
@@ -495,8 +497,8 @@ export function ServiceSettingsForm({ service, siblingServiceNames = [], onSubmi
         <label className="mb-4 flex items-start gap-3 rounded-xl border border-border/50 bg-muted/20 p-3">
           <Checkbox checked={monitoringEnabled} onCheckedChange={(value) => setMonitoringEnabled(value === true)} />
           <span>
-            <span className="block text-sm font-medium text-foreground">Watch this service for outages</span>
-            <span className="block text-xs leading-relaxed text-muted-foreground">Uses the shared server event stream and reconciliation sweep. Turn off only for intentionally unmanaged or disposable services.</span>
+            <span className="block text-sm font-medium text-foreground">{f.monitoring}</span>
+            <span className="block text-xs leading-relaxed text-muted-foreground">{f.monitoringHint}</span>
           </span>
         </label>
         {!isMonorepo && (

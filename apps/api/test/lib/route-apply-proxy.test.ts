@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@repo/db", () => ({ repos: {} }));
+vi.mock("@repo/db", () => ({ repos: {
+  deployment: { findById: vi.fn(async () => ({
+    id: "dep-1", projectId: "proj-1", organizationId: "org-1", meta: { deployTarget: "local" },
+  })) },
+} }));
 
 import { reconcileProjectRoutes } from "@repo/platform/engine/lib/route-apply.service";
 
@@ -18,7 +22,7 @@ import { reconcileProjectRoutes } from "@repo/platform/engine/lib/route-apply.se
 const project = (proxy?: unknown) => ({
   id: "proj-1",
   organizationId: "org-1",
-  cloudWorkspaceId: null,
+  workspaceId: null,
   activeDeploymentId: "dep-1",
   webhookDomain: null,
   routingConfig: proxy ? ({ proxy } as never) : null,

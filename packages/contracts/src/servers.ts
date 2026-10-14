@@ -5,8 +5,10 @@ import {
 } from "./infrastructure-resources";
 import { ClusterRuntimeCollectionSchemas } from "./cluster-runtime";
 import { ClusterStorageCollectionSchemas } from "./cluster-storage";
+import { ManagedServerResourceSchemas } from "./server-managed";
 import { Type, type Static } from "@sinclair/typebox";
 import { AgentExecBody } from "./exec";
+import { CloudWorkspaceSchema, CloudWorkspaceUsageSchema, CloudWorkspaceResizePreviewSchema, CreateManagedServerInputSchema, ResizeManagedServerInputSchema, RemoveManagedServerInputSchema } from "./cloud-workspaces";
 import { ServerClusterCollectionSchemas, NetworkHostObservationSchema } from "./server-clusters";
 import {
   ServerTunnelSchema,
@@ -36,6 +38,16 @@ import {
 } from "./server-containers";
 
 const nullableString = Type.Union([Type.String(), Type.Null()]);
+export const ServerNetworkSettingsSchema = Type.Object({
+  internetAccess: Type.Union([Type.Boolean(), Type.Null()]),
+  ingressPorts: Type.Array(Type.Integer({ minimum: 1, maximum: 65535 })),
+  ingressAll: Type.Optional(Type.Boolean()),
+  egress: Type.Optional(Type.Union([Type.Array(Type.String()), Type.Null()])),
+  privateIp: Type.Optional(nullableString),
+  outboundIp: Type.Optional(nullableString),
+  outboundMode: Type.Optional(nullableString),
+  revision: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })),
+}, { additionalProperties: false });
 const connectionFields = {
   name: Type.Optional(nullableString),
   sshHost: Type.Optional(nullableString),
@@ -83,9 +95,16 @@ export const HostChannelSchema = Type.Object(
 
 const serverFields = {
   id: Type.String(),
+  source: Type.Optional(Type.Union([Type.Literal("local"), Type.Literal("cloud")])),
+  /** Canonical IDs for an explicitly linked destination, for UI selection only. */
+  cloudReference: Type.Optional(Type.Object({
+    serverId: Type.String(),
+    workspaceId: Type.String(),
+  }, { additionalProperties: false })),
+  purpose: Type.Optional(Type.Union([Type.Literal("deployment"), Type.Literal("migration_source")])),
   name: nullableString,
   isLocal: Type.Boolean(),
-  sshHost: Type.String(),
+  sshHost: nullableString,
   sshPort: Type.Union([Type.Number(), Type.Null()]),
   sshUser: nullableString,
   sshAuthMethod: nullableString,
@@ -96,6 +115,17 @@ const serverFields = {
   createdAt: Type.String(),
   country: nullableString,
   sshTransport: Type.Union([Type.Literal("direct"), Type.Literal("cloudflare")]),
+  connection: Type.Optional(Type.Union([Type.Literal("local"), Type.Literal("ssh"), Type.Literal("cloud")])),
+  managed: Type.Optional(Type.Union([CloudWorkspaceSchema, Type.Null()])),
+  terminalSessionLimit: Type.Optional(Type.Integer({ minimum: 0 })),
+  capabilities: Type.Optional(Type.Object({
+    monitor: Type.Boolean(),
+    terminal: Type.Boolean(),
+    exec: Type.Boolean(),
+    hostConfiguration: Type.Boolean(),
+    ssh: Type.Boolean(),
+    networkSettings: Type.Optional(Type.Boolean()),
+  }, { additionalProperties: false })),
 };
 /** Explicitly excludes password, private-key material and passphrase, including ciphertext. */
 export const ServerSchema = Type.Object(serverFields, { additionalProperties: false });
@@ -430,8 +460,12 @@ export const ServerCollectionSchemas = {
     optionalInput: true,
     output: ApplyAllServerContainersResultSchema,
   },
-  list: { action: "read", output: Type.Array(ServerDetailSchema) },
+  list: { action: "read", scope: "list", output: Type.Array(ServerDetailSchema) },
+  destinations: { action: "read", scope: "list", output: Type.Object({ servers: Type.Array(ServerDetailSchema) }) },
   create: { action: "write", input: CreateServerInputSchema, output: ServerSchema },
+  createManaged: { action: "admin", input: CreateManagedServerInputSchema, output: CloudWorkspaceSchema },
+  availableManaged: { action: "admin", scope: "list", output: Type.Object({ servers: Type.Array(ServerDetailSchema) }) },
+  connectManaged: { action: "admin", input: Type.Object({ serverId: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9_-]+$" }) }, { additionalProperties: false }), output: CloudWorkspaceSchema },
   testConnection: {
     action: "write",
     input: CreateServerInputSchema,
@@ -439,6 +473,30 @@ export const ServerCollectionSchemas = {
   },
 } as const satisfies Record<string, ResourceOperationSchema>;
 export const ServerResourceSchemas = {
+  ...ManagedServerResourceSchemas,
+  usage: { action: "read", output: CloudWorkspaceUsageSchema },
+  getNetworkSettings: {
+    action: "read",
+    input: Type.Object({ details: Type.Optional(Type.Boolean()) }, { additionalProperties: false }),
+    optionalInput: true,
+    output: ServerNetworkSettingsSchema,
+  },
+  updateNetworkSettings: {
+    action: "admin",
+    input: Type.Object({
+      internetAccess: Type.Boolean(),
+      expectedInternetAccess: Type.Boolean(),
+      egress: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 253, pattern: "^[^\\s/\\\\:@?#\\x00]+$" }), { minItems: 1, maxItems: 50 })),
+      expectedRevision: Type.Optional(Type.String({ pattern: "^[a-f0-9]{64}$" })),
+      confirm: Type.Literal(true),
+    }, { additionalProperties: false }),
+    output: ServerNetworkSettingsSchema,
+  },
+  ensure: { action: "write", output: CloudWorkspaceSchema },
+  previewResize: { action: "read", output: CloudWorkspaceResizePreviewSchema },
+  resize: { action: "admin", input: ResizeManagedServerInputSchema, output: CloudWorkspaceSchema },
+  retry: { action: "admin", output: CloudWorkspaceSchema },
+  removeManaged: { action: "admin", input: RemoveManagedServerInputSchema, output: CloudWorkspaceSchema },
   infrastructure: { action: "read", output: ServerInfrastructureSchema },
   inspectNetwork: { action: "admin", output: NetworkHostObservationSchema },
   githubStatus: {

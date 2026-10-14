@@ -291,7 +291,7 @@ vi.mock("@repo/platform/engine/modules/monitoring/container-events", () => ({ re
  *   - `deployTarget: "server"` with NO serverId still routes over SSH, to the org's one
  *     server — and throws if the org doesn't have exactly one, as `resolveOrgServer` does.
  *   - `deployTarget: "cloud"` is only cloud when the build was local; otherwise the
- *     project was promoted and `project.cloudWorkspaceId` is what says so.
+ *     project was promoted and `project.workspaceId` is what says so.
  *
  * A mock that flattened those (an earlier one mapped "no serverId" to the LOCAL socket)
  * makes the mis-keyed group unrepresentable: every daemon answers alike, so the fixture
@@ -380,7 +380,7 @@ interface SeedOpts {
   deployTarget?: string;
   buildStrategy?: string;
   /** Set to make this a promoted cloud project — the canonical cloud test. */
-  cloudWorkspaceId?: string;
+  workspaceId?: string;
   /**
    * The box the container really lives on, when the meta can't name it: a deploy that
    * targets "a server" without recording which one still runs SOMEWHERE, and the point of
@@ -418,7 +418,7 @@ function seedApp(opts: SeedOpts = {}) {
     slug: `app-${n}`,
     organizationId,
     activeDeploymentId: depId,
-    cloudWorkspaceId: opts.cloudWorkspaceId ?? null,
+    workspaceId: opts.workspaceId ?? null,
     disabledAt: opts.disabledAt ?? null,
   });
   h.deployments.push({
@@ -469,7 +469,7 @@ function seedComposeService(
     slug: `stack-${n}`,
     organizationId: "org1",
     activeDeploymentId: depId,
-    cloudWorkspaceId: null,
+    workspaceId: null,
     disabledAt: null,
   });
   h.deployments.push({
@@ -679,13 +679,26 @@ describe("automatic monitoring coverage and lifecycle", () => {
     expect(isTrackedHealthContainer(await groupKey("last-box"), containerId)).toBe(false);
   });
 
-  it("does no probing or incident work in the cloud runtime", async () => {
+  it("does not probe a Cloud deployment without a matching managed server binding", async () => {
     seedApp({ serverId: "must-not-be-probed" });
     h.platformTarget = "cloud";
     expect(await tick()).toMatchObject({ servers: 0, workloads: 0, opened: 0 });
     expect(h.inspects).toBe(0);
     expect(h.incidents).toEqual([]);
-    expect(h.renew).not.toHaveBeenCalled();
+    expect(h.renew).toHaveBeenCalledWith([]);
+  });
+
+  it("watches managed Docker workloads on their owned Cloud server", async () => {
+    const { projectId } = seedApp({ serverId: "managed-server", workspaceId: "managed-owner", deployTarget: "cloud" });
+    Object.assign(h.projects[0]!, { serverId: "managed-server" });
+    Object.assign(h.deployments[0]!.meta!, {
+      managedWorkspaceId: "managed-owner",
+      managedServer: { projectId, workspaceId: "provider-vm", ownerWorkspaceId: "managed-owner" },
+    });
+    h.platformTarget = "cloud";
+    expect(await tick()).toMatchObject({ servers: 1, workloads: 1 });
+    expect(h.inspects).toBe(1);
+    expect(h.renew).toHaveBeenCalledWith([`${await groupKey("managed-server")}::${projectId}`]);
   });
 });
 
@@ -1329,6 +1342,56 @@ describe("intentional stop", () => {
 // ─── Gate 3: an unreachable box ──────────────────────────────────────────────
 
 describe("unreachable server", () => {
+  it.each(["selfhosted", "desktop"] as const)("keeps an explicit network failure distinct from failed services in %s mode", async (target) => {
+    h.platformTarget = target;
+    for (const serverId of ["network-a", "network-b", "network-c"]) seedApp({ serverId });
+    await tick();
+    h.listThrows = "(HTTP code 502) unexpected - Cannot reach Docker over SSH: connect ENETUNREACH 192.0.2.1:22 - Local (0.0.0.0:63263)";
+    expect(await tick()).toMatchObject({ offline: 3, unreachable: 0, opened: 3, resolved: 0 });
+    const { listWorkloadHealthSnapshots } = await import("@repo/platform/engine/modules/monitoring/health-watch");
+    expect(listWorkloadHealthSnapshots("org1").every((row) => row.state === "unknown")).toBe(true);
+    expect(h.incidents.every((row) => row.kind === "server_unreachable")).toBe(true);
+    await tick();
+    expect(h.emit).not.toHaveBeenCalled();
+
+    h.listThrows = null;
+    expect(await tick()).toMatchObject({ offline: 0, resolved: 3 });
+    expect(listWorkloadHealthSnapshots("org1").every((row) => row.state === "healthy")).toBe(true);
+    expect(h.emit).not.toHaveBeenCalled();
+  });
+
+  it("alerts once if a host still refuses connections after a network gap", async () => {
+    seedApp({ serverId: "network-then-host" });
+    h.listThrows = "connect ENETUNREACH 192.0.2.1:22";
+    await tick();
+    h.listThrows = "connect ECONNREFUSED 192.0.2.1:22";
+    await tick();
+    await tick();
+    expect(emitted("server.unreachable")).toHaveLength(1);
+    h.listThrows = null;
+    await tick();
+    expect(emitted("server.reachable")).toHaveLength(1);
+  });
+
+  it("keeps confirmed workload failures open through a network interruption", async () => {
+    const { projectId, containerId } = seedApp({ serverId: "confirmed-then-network" });
+    setState(containerId, "exited", { exitCode: 1 });
+    await confirm();
+    h.emit.mockClear();
+    h.listThrows = "connect ENETDOWN 192.0.2.1:22";
+    expect(await tick()).toMatchObject({ offline: 1, resolved: 0, stale: 0 });
+    expect(openFor(projectId)).toHaveLength(1);
+    expect(h.emit).not.toHaveBeenCalled();
+  });
+
+  it("reports a current-only network failure without creating incidents", async () => {
+    seedApp({ serverId: "network-current" });
+    h.listThrows = "connect ENETUNREACH 192.0.2.1:22";
+    expect((await checkCurrent()).summary).toMatchObject({ offline: 1, unreachable: 0 });
+    expect(h.incidents).toEqual([]);
+    expect(h.emit).not.toHaveBeenCalled();
+  });
+
   it("keeps remote health unknown while the desktop is offline without opening server incidents", async () => {
     h.platformTarget = "desktop";
     const first = seedApp({ serverId: "remote-a" });
@@ -1736,7 +1799,8 @@ describe("group identity", () => {
     await confirm();
     expect(openFor(projectId)).toHaveLength(1);
 
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { diagnostics } = await import("@repo/core/diagnostics");
+    const warn = vi.spyOn(diagnostics, "warn").mockImplementation(() => {});
     try {
       // Nothing stops a server being deleted while projects still target it.
       h.servers.delete("srvGone");
@@ -1764,7 +1828,8 @@ describe("group identity", () => {
     setState(containerId, "exited", { exitCode: 1 });
     h.servers.set("srvMoved", { id: "srvMoved", name: "box", organizationId: "org2" });
 
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { diagnostics } = await import("@repo/core/diagnostics");
+    const warn = vi.spyOn(diagnostics, "warn").mockImplementation(() => {});
     try {
       const summary = await confirm();
 
@@ -1787,7 +1852,8 @@ describe("group identity", () => {
     });
     setState(containerId, "exited", { exitCode: 1 });
 
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { diagnostics } = await import("@repo/core/diagnostics");
+    const warn = vi.spyOn(diagnostics, "warn").mockImplementation(() => {});
     try {
       const summary = await confirm();
 
@@ -1848,12 +1914,12 @@ describe("workload selection", () => {
   });
 
   it("never watches a promoted cloud project, whatever its last local deploy says", async () => {
-    // `cloudWorkspaceId` is the canonical "this is a cloud project" test, and it has to
+    // `workspaceId` is the canonical "this is a cloud project" test, and it has to
     // outrank the deployment snapshot: after a promote the workload runs on Oblien while
     // the last LOCAL deployment still reads as an ordinary local deploy. Watching that
     // snapshot means inspecting containers this host no longer has — a confirmed `down`
     // on a service that is up.
-    const { containerId } = seedApp({ serverId: null, cloudWorkspaceId: "ws_1" });
+    const { containerId } = seedApp({ serverId: null, workspaceId: "ws_1" });
     setState(containerId, "gone");
 
     const summary = await tick();

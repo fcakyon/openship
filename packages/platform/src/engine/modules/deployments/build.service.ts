@@ -14,6 +14,9 @@
  * pipeline owns the deploy↔rollback cycle (a deliberate dynamic import).
  */
 
+import { assertRuntimeVersionTarget, getRuntimeVersionPolicy, resolveRuntimeImages } from "@repo/core";
+import { reportCaughtError as observeCaughtError, diagnostics as errorDiagnostics } from "@repo/core/diagnostics";
+import { assertNotControlPlane } from "@repo/platform/engine/lib/resource-access";
 import { findActiveDeployment } from "@repo/platform/engine/lib/active-deployment";
 import {
   repos,
@@ -21,10 +24,12 @@ import {
   unresolvedComposeEnvironmentKeys,
   type Project,
   type Service,
+  type DeploymentResourceChanges,
 } from "@repo/db";
 import {
   AppError,
   NotFoundError,
+  ValidationError,
   ForbiddenError,
   SYSTEM,
   STACKS,
@@ -38,6 +43,7 @@ import {
   looksLikeSecretKey,
   mergeAdvanced,
   resolveProjectVolumes,
+  resolveTierResources,
   type StackId,
   type DeployTarget,
   type BuildStrategy,
@@ -49,7 +55,7 @@ import {
   type OpenshipEnv,
 } from "@repo/core";
 import type { LogEntry, ResourceConfig } from "@repo/adapters";
-import { resolveCloudResourceConfig } from "./cloud-resources";
+import { decodeResources } from "../../lib/resources";
 import { resolveEnvDirtyServiceIds } from "./env-drift";
 import { withProjectRuntimeLock } from "../../lib/project-runtime-lock";
 import { resolveDeploymentEnvironment } from "./deployment-environment";
@@ -59,8 +65,9 @@ import { decryptEnvMap, encrypt } from "../../lib/encryption";
 import { getCommitByRef, getLatestCommit, getRepository } from "../github/github.service";
 import { assertGitHubRepoAccess } from "../github/github-access";
 import { resolveSmartRoute } from "./smart-route";
-import { snapshotNeedsGitSource, snapshotNeedsProjectSource, withoutPinnedArtifacts } from "./pinned-artifacts";
+import { snapshotNeedsGitSource, snapshotNeedsProjectSource, withoutPinnedArtifacts, strictRefreshImages } from "./pinned-artifacts";
 import { deploymentWorkload, projectToClass, snapshotToClass } from "./deployment-class";
+import { needsRunningApplication } from "./build-execution-plan";
 import {
   resolveProjectInfo,
   resolveProjectSourceEnv,
@@ -76,6 +83,8 @@ import {
   unmaskBuildArgs,
 } from "../../lib/secret-env";
 import { assertValidCustomDomains, customHostnamesOf } from "../../lib/custom-domain-guard";
+import { assertFreeEndpointsAllowed, composeEndpointChanges } from "../../lib/free-domain-guard";
+import { resolveServicePublicEndpoints } from "../../lib/public-endpoints";
 import {
   assertBuildMinutesAvailable,
   assertPlanAllowsDeployShape,
@@ -175,12 +184,11 @@ export async function runDeploymentPreflight(
     /** Project id — passed to the remote-clone-token preflight check so
      *  project-scoped clone tokens are considered. */
     projectId?: string;
-    /** Catalog app this project instantiates + whether it has ever been live, so
-     *  the app's declared host minimum is matched against the target machine. */
+    /** Catalog app whose recommendations are checked against the target machine. */
     appTemplateId?: string | null;
-    firstDeploy?: boolean;
   },
 ): Promise<void> {
+  assertRuntimeVersionTarget({ runtimeVersion: snapshot.runtimeVersion, runtimeImage: snapshot.runtimeImageOverride ? snapshot.runtimeImage : undefined, framework: snapshot.framework, runtimeMode: snapshot.runtimeMode, workloadType: snapshot.workload, buildKind: snapshot.build, sourceKind: snapshot.source, projectType: opts.multiService ? "compose" : null });
   const preflight = await runPreflightChecks(snapshot, {
     customDomain: routeState.primaryCustomDomain,
     slug:
@@ -194,7 +202,6 @@ export async function runDeploymentPreflight(
     ...(opts.gitOwner !== undefined ? { gitOwner: opts.gitOwner } : {}),
     ...(opts.projectId !== undefined ? { projectId: opts.projectId } : {}),
     ...(opts.appTemplateId !== undefined ? { appTemplateId: opts.appTemplateId } : {}),
-    ...(opts.firstDeploy !== undefined ? { firstDeploy: opts.firstDeploy } : {}),
     buildStrategy: snapshot.buildStrategy as "local" | "server" | undefined,
   });
   if (!preflight.ok) {
@@ -204,6 +211,8 @@ export async function runDeploymentPreflight(
 
 /** Config snapshot stored in deployment.meta - self-contained build+deploy config. */
 export interface DeploymentConfigSnapshot {
+  /** Idempotency for an explicit capacity adjustment; never accepted over HTTP. */
+  capacityAdjustment?: { key: string; requestHash: string };
   /** Internal Cloud service-slot reservation, derived at queue creation. */
   cloudApplicationSlot?: boolean;
   /** Frozen stack names reserve slots before their service rows are synchronized. */
@@ -214,6 +223,8 @@ export interface DeploymentConfigSnapshot {
   branch: string;
   framework: string;
   buildImage: string;
+  runtimeVersion?: string;
+  runtimeImageOverride?: boolean;
   runtimeImage: string;
   packageManager: string;
   installCommand: string;
@@ -253,6 +264,8 @@ export interface DeploymentConfigSnapshot {
   workload?: WorkloadType;
   /** Absolute path to a local project directory (alternative to repoUrl) */
   localPath?: string;
+  /** Validated upload capability; never accept a client-supplied control-plane path. */
+  uploadSessionId?: string;
   /**
    * Release source (gitProvider === "release"). Resolved by
    * `applyReleaseSourceToSnapshot` in the async entry points: the semver plus
@@ -271,27 +284,20 @@ export interface DeploymentConfigSnapshot {
   releaseRepo?: string;
   /** Build strategy: "server" (build in workspace) or "local" (build on host) */
   buildStrategy?: BuildStrategy;
-  /**
-   * Folder-upload flow: source was uploaded out of band (no git). For a cloud
-   * deploy the browser uploaded into THIS pre-provisioned Oblien workspace —
-   * the build adopts it and skips clone + transfer (`sourceStaged`). For a
-   * self-hosted deploy `localPath` above points at the staging dir instead.
-   * Set by requestBuildAccess from the upload session.
-   */
-  uploadWorkspaceId?: string;
-  sourceStaged?: boolean;
   /** Deploy target: "local" (this machine), "server" (remote SSH), or "cloud" (Oblien) */
   deployTarget?: DeployTarget;
   clusterId?: string;
   clusterRuntimeId?: string;
   clusterProjectId?: string;
   clusterConfig?: import("@repo/core").ClusterWorkloadConfig;
-  /** Target server ID when deployTarget is "server" */
+  /** Execution host identity for a connected server or managed Cloud workspace. */
   serverId?: string;
   /** Runtime mode: "bare" (direct process) or "docker" (container-based) */
   runtimeMode?: "bare" | "docker";
-  workspaceId?: string;
-  cloudDockerWorkspace?: { projectId: string; workspaceId: string };
+  /** Absent in legacy snapshots: preserve their existing container hosting. */
+  cloudStaticHosting?: "pages" | "server";
+  managedWorkspaceId?: string;
+  managedServer?: { projectId: string; workspaceId: string; ownerWorkspaceId: string };
   /**
    * Adopt an already-running process instead of building + starting one. Set
    * for the self-deployed control plane so it becomes a real deployment without
@@ -441,6 +447,11 @@ function toRuntimeMode(value: string | null | undefined): "bare" | "docker" | un
  *  All values must be set by prepare / ensureProject before this is called. */
 export function buildConfigSnapshot(project: Project, branch?: string): DeploymentConfigSnapshot {
   const deploymentClass = projectToClass(project);
+  assertRuntimeVersionTarget({ ...project, ...deploymentClass, buildKind: deploymentClass.build, sourceKind: deploymentClass.source, workloadType: deploymentClass.workload });
+  const policy = getRuntimeVersionPolicy(project.framework);
+  const runtime = project.runtimeVersion == null && !(project.runtimeImage && policy)
+    ? undefined
+    : resolveRuntimeImages(project.framework, project.runtimeVersion ?? policy!.defaultVersion, project.buildImage, project.runtimeImage);
 
   return {
     // Owning org — needed by every downstream that does an org-scoped
@@ -455,7 +466,9 @@ export function buildConfigSnapshot(project: Project, branch?: string): Deployme
     branch: branch || project.gitBranch || (project.localPath ? "main" : ""),
     framework: project.framework!,
     buildImage: project.buildImage!,
-    runtimeImage: resolveRuntimeImage(project),
+    runtimeImage: project.runtimeImage ?? resolveRuntimeImage(project),
+    ...(project.runtimeImage && { runtimeImageOverride: true }),
+    ...(runtime && { runtimeVersion: runtime.runtimeVersion, buildImage: runtime.buildImage, runtimeImage: runtime.runtimeImage }),
     packageManager: project.packageManager!,
     installCommand: project.installCommand!,
     buildCommand: project.buildCommand!,
@@ -479,19 +492,17 @@ export function buildConfigSnapshot(project: Project, branch?: string): Deployme
     // classifies as it did the day it was built, even after the project's flags
     // change.
     ...deploymentClass,
-    localPath: deploymentClass.source === "upload" ? project.localPath || undefined : undefined,
-    // Per packages/db/src/schema/project.ts:231 — `cloudWorkspaceId IS
-    // NOT NULL` is THE canonical "is this a cloud project?" test.
-    // Default the snapshot's deployTarget from that so preflight,
-    // pipeline, and rollback all see "cloud" without depending on the
-    // UI to pass it on every redeploy. The desktop picker still wins
-    // when it does pass an explicit deployTarget (see line ~773).
-    deployTarget: project.cloudWorkspaceId ? "cloud" : project.clusterId ? "cluster" : undefined,
+    localPath: !env.CLOUD_MODE && deploymentClass.source === "upload" ? project.localPath || undefined : undefined,
+    // Both a managed owner and a direct provider binding identify Cloud.
+    // Resolve the full execution identity below, independently of UI input.
+    deployTarget: project.workspaceId ? "cloud" : project.clusterId ? "cluster" : undefined,
+    ...(project.workspaceId ? { managedWorkspaceId: project.workspaceId } : {}),
     ...(project.clusterId ? { clusterId: project.clusterId, clusterProjectId: project.id, clusterConfig: project.clusterConfig ?? { replicas: 1 } } : {}),
     // Runtime isolation mode persisted on the project (editable in the Runtime
     // tab). So a redeploy/webhook deploy respects the saved choice instead of
     // re-defaulting. The wizard's per-deploy override still wins when passed.
     runtimeMode: toRuntimeMode(project.runtimeMode),
+    cloudStaticHosting: project.cloudStaticHosting ?? "pages",
   };
 }
 
@@ -551,7 +562,7 @@ export async function applyReleaseSourceToSnapshot(
     snapshot.hasBuild = false;
     snapshot.source = "image";
     snapshot.build = "prebuilt";
-    if (!project.cloudWorkspaceId) snapshot.runtimeMode = "docker";
+    snapshot.runtimeMode = "docker";
     return release.version;
   }
 
@@ -600,7 +611,8 @@ async function resolveLatestCommitInfo(ctx: RequestContext, project: Project, br
           latestMessage: head.message ?? null,
         },
       });
-    } catch {
+    } catch (diagnosticFailure) {
+      observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service");
       // Cache persistence is best-effort; a deploy must not fail after GitHub
       // already returned a usable commit merely because this write failed.
     }
@@ -633,7 +645,7 @@ async function canonicalizeCommitRef(
   if (!trimmed || isFullCommitSha(trimmed)) return trimmed;
   if (!project.gitOwner || !project.gitRepo) return trimmed;
   const found = await getCommitByRef(ctx, project.gitOwner, project.gitRepo, trimmed).catch(
-    () => null,
+    (diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return null; },
   );
   return found?.sha ?? trimmed;
 }
@@ -776,12 +788,11 @@ function sameComposeBuildSource(a: DeployableService[], b: DeployableService[]):
 
 /**
  * Re-parse the project's current docker-compose source and 3-way reconcile it against the
- * stored service rows (repos.service.reconcileFromCompose): services the user
- * hasn't edited auto-update to the repo; edited services are preserved and flagged
- * (`driftSpec`) for review. Existing rows reconcile best-effort. Bootstrapping an
- * explicitly compose-shaped project is strict: a bad/empty declared file must
- * block instead of silently falling through to the generic single-app builder.
- * Non-compose projects are unchanged. GitHub and local-path sources converge on
+ * stored service rows (repos.service.reconcileFromCompose): source-owned fields
+ * follow the repo while explicit service overrides are preserved. Declared or
+ * previously imported Compose sources must remain valid before deployment.
+ * Independently attached services do not require Compose in an app's repository.
+ * GitHub and local-path sources converge on
  * resolveProjectInfo, so deploy has one parser and one 3-way merge policy.
  *
  * `changedPaths` (webhook only) is an optimization: when we have a definite,
@@ -799,7 +810,7 @@ function composeCouldHaveChanged(project: Project, changedPaths: string[]): bool
     const changed = rawPath.replace(/^\.\//, "");
     // openship.json can itself declare the complete native service set and its
     // buildArgs, so it is a Compose-source change even when no YAML changed.
-    if (changed.toLowerCase() === "openship.json") return true;
+    if (/(^|\/)openship\.json$/i.test(changed)) return true;
     if (COMPOSE_PATH_RE.test(changed)) return true;
     if (!declared) return false;
     return changed === declared || changed.startsWith(`${declared}/`);
@@ -840,7 +851,7 @@ async function reconcileComposeSource(
   } = {},
 ): Promise<ProjectInfo | undefined> {
   let bootstrapping = false;
-  const localPath = project.localPath?.trim();
+  const localPath = env.CLOUD_MODE ? undefined : project.localPath?.trim();
   const isLocalSource = Boolean(localPath);
   try {
     if (!isLocalSource && (!project.gitOwner || !project.gitRepo)) return;
@@ -873,9 +884,17 @@ async function reconcileComposeSource(
     ) {
       return; // this push didn't touch the compose file → no drift possible
     }
-    const composePath = project.composePath ?? undefined;
-    // Without composePath, a subpath project re-scans at the detected root and
-    // finds no compose (or the wrong one), so reconciliation silently stops.
+    const composePath = project.composePath?.trim() || undefined;
+    // `kind: compose` also represents independently added image services. An
+    // app scan can legitimately have no Compose services (#959); only a project
+    // that declares Compose or holds an imported baseline needs them back, and
+    // gets them even when its root also looks like an app (#1020).
+    const expectsComposeServices =
+      isMultiServiceProject(project) ||
+      composeRows.some((service) => service.kind === "compose" && service.importedSpec != null);
+    const expectCompose = expectsComposeServices && !composePath ? { expectCompose: true } : {};
+    // Without rootDirectory, a subpath project re-scans at the detected root and
+    // finds no compose (or the wrong one), so the deploy fails.
     // Local wins when present because that is the build source transferred to a
     // remote server; any stale Git metadata must not change what gets parsed.
     const info = isLocalSource
@@ -883,7 +902,9 @@ async function reconcileComposeSource(
           source: "local",
           path: localPath!,
           composePath,
+          rootDirectory: project.rootDirectory ?? undefined,
           env: options.interpolationEnv,
+          ...expectCompose,
         })
       : await resolveProjectInfo({
           source: "github",
@@ -892,10 +913,16 @@ async function reconcileComposeSource(
           branch,
           ctx,
           composePath,
+          rootDirectory: project.rootDirectory ?? undefined,
           env: options.interpolationEnv,
+          ...expectCompose,
         });
     const services = info.services ?? [];
     if (services.length === 0) {
+      // Keep an app scan's source env, leave the attached services alone, and
+      // require a nonempty source only when the project, scan, or imported
+      // baseline declares one.
+      if (!expectsComposeServices && info.projectType !== "services") return info;
       throw new ComposeConfigurationError(
         `The configured compose path "${project.composePath ?? "repository root"}" contains no services.`,
       );
@@ -928,7 +955,7 @@ async function resolveLifecycleSourceEnv(
   branch: string,
 ): Promise<ProjectSourceEnv | undefined> {
   if (isReleaseProvider(project.gitProvider)) return undefined;
-  const localPath = project.localPath?.trim();
+  const localPath = env.CLOUD_MODE ? undefined : project.localPath?.trim();
   if (!localPath && (!project.gitOwner || !project.gitRepo)) return undefined;
 
   try {
@@ -951,7 +978,7 @@ async function resolveLifecycleSourceEnv(
     if (localPath) {
       throw new AppError(`Could not read project environment: ${safeErrorMessage(err)}`, 400);
     }
-    console.warn(`[source-env] refresh skipped for ${project.id}:`, err);
+    errorDiagnostics.warn("platform/engine/modules/deployments/build.service", `[source-env] refresh skipped for ${project.id}:`, err);
     return undefined;
   }
 }
@@ -998,7 +1025,7 @@ export async function resolveRollbackContext(
   if (!commitShaBefore) {
     const lastGood = await repos.deployment
       .getLatestSuccessfulForBranch(project.id, branch)
-      .catch(() => null);
+      .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return null; });
     commitShaBefore = lastGood?.commitSha ?? undefined;
   }
 
@@ -1011,15 +1038,14 @@ export async function resolveRollbackContext(
  * and triggerDeployment) so they can never diverge on where a project deploys.
  *
  * Precedence:
- *   - deployTarget: explicit per-deploy override (the wizard picker)
- *       > cloudWorkspaceId (the canonical "is a cloud project" primitive)
+ *   - deployTarget: managed workspace binding (immutable without a migration)
+ *       > explicit per-deploy override (the wizard picker) > workspaceId
  *       > project.serverId (the DURABLE server binding — survives a fresh/partial
  *         snapshot that a redeploy would otherwise resolve to "local")
  *       > the project's ACTIVE deployment's last target (what it runs on now)
  *       > undefined (host default, resolved later by the pipeline's resolver).
- *   - serverId: ONLY kept when the resolved target is "server". For cloud/local
- *       it is dropped, so a non-server deploy can't carry a stale serverId and
- *       mis-route (the bug the unconditional inheritance had).
+ *   - serverId: kept for connected servers and managed Cloud hosts. Direct
+ *       Cloud/local targets discard stale server IDs from older snapshots.
  *   - runtimeMode: override > project.runtimeMode column > active-meta.
  */
 export async function resolveSnapshotTarget(
@@ -1027,24 +1053,18 @@ export async function resolveSnapshotTarget(
   override?: { deployTarget?: DeployTarget; serverId?: string; runtimeMode?: "bare" | "docker" },
 ): Promise<{ deployTarget?: DeployTarget; serverId?: string; runtimeMode?: "bare" | "docker"; clusterId?: string; clusterRuntimeId?: string; clusterProjectId?: string; clusterConfig?: import("@repo/core").ClusterWorkloadConfig }> {
   const activeMeta = project.activeDeploymentId
-    ? ((await findActiveDeployment(project).catch(() => null))
+    ? ((await findActiveDeployment(project).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return null; }))
         ?.meta as DeploymentConfigSnapshot | null)
     : null;
 
-  // Target priority, highest first:
-  //   1. explicit override (the caller chose a target for this deploy)
-  //   2. cloud — a promoted project (canonical on the SaaS)
-  //   3. project.serverId — the DURABLE server binding
-  //   4. the active deployment's stamped target
-  //   5. inferred "server" when the active meta carries a serverId
-  // Step 3 is why a server-hosted project can no longer regress to "local" on a
-  // fresh/partial snapshot (which then nulled its custom-domain ports). Steps 4–5
-  // remain for legacy rows not yet backfilled: step 5 matches resolveEffectiveTarget
-  // (which routes ANY serverId over SSH) and repairs migrated (adopt/reattach) metas
-  // that set serverId but historically omitted deployTarget.
+  // Managed ownership pins the host. Otherwise preserve the existing override,
+  // durable binding and historical snapshot precedence described above.
   let deployTarget: DeployTarget | undefined;
-  if (override?.deployTarget) deployTarget = override.deployTarget;
-  else if (project.cloudWorkspaceId) deployTarget = "cloud";
+  if (project.workspaceId && ((override?.serverId && override.serverId !== project.serverId) ||
+    (override?.deployTarget && override.deployTarget !== "cloud" && !(override.deployTarget === "server" && override.serverId === project.serverId))))
+    throw new AppError("Changing this project's Cloud workspace requires a migration", 409, "CLOUD_WORKSPACE_TARGET_CONFLICT");
+  if (project.workspaceId) deployTarget = "cloud";
+  else if (override?.deployTarget) deployTarget = override.deployTarget;
   else if (project.clusterId) deployTarget = "cluster";
   else if (project.serverId) deployTarget = "server";
   else if (activeMeta?.deployTarget) deployTarget = activeMeta.deployTarget === "cluster" ? "local" : activeMeta.deployTarget;
@@ -1061,9 +1081,12 @@ export async function resolveSnapshotTarget(
   }
 
   const serverId =
-    deployTarget === "server"
+    project.workspaceId ? project.serverId ?? undefined : deployTarget === "server"
       ? (override?.serverId ?? project.serverId ?? activeMeta?.serverId ?? undefined)
       : undefined;
+
+  if (deployTarget === "cloud" && (!project.workspaceId || !serverId))
+    throw new AppError("Choose a managed server for this project before deploying", 409, "DEPLOYMENT_SERVER_REQUIRED");
 
   const runtimeMode =
     override?.runtimeMode ?? toRuntimeMode(project.runtimeMode) ?? activeMeta?.runtimeMode;
@@ -1269,13 +1292,20 @@ export async function checkNoActiveBuild(projectId: string) {
   // its claimed build worker is still unwinding. Status-only history paging can
   // neither prove worker completion nor guarantee the active row is on page 1.
   const [active] = await repos.deployment.listInFlightByProject(projectId);
+  if (active && !["queued", "building", "deploying"].includes(active.status) &&
+      (active.meta as { managedWorkspaceId?: string } | null)?.managedWorkspaceId) {
+    const project = await repos.project.findById(projectId);
+    const { recoverManagedDeploymentExecution } = await import("./deployment-recovery");
+    if (project && await recoverManagedDeploymentExecution(active, project)) return;
+  }
   if (active) {
     const cancelling = active.status === "cancelled";
-    throw new ForbiddenError(
+    throw new AppError(
       cancelling
         ? `The previous deployment is still finishing cancellation (${active.id}). ` +
             "Wait a few seconds and retry; a parallel redeploy is blocked until its worker stops."
         : `A deployment is already in progress (${active.id}). Cancel it first or wait for it to complete.`,
+      409, "DEPLOYMENT_IN_PROGRESS",
     );
   }
 }
@@ -1288,6 +1318,12 @@ export async function createQueuedDeployment(opts: Parameters<typeof createQueue
 }
 
 async function createQueuedDeploymentUnlocked(opts: {
+  actionRequestId?: string;
+  actionLeaseOwner?: string;
+  /** Internal, reviewed resource edit committed with deployment admission. */
+  resourceChanges?: DeploymentResourceChanges;
+  /** Attribution only; ownership/authorization still comes from organizationId. */
+  analyticsActor?: Pick<RequestContext, "userId" | "source">;
   projectId: string;
   /** Org that owns this deployment. Pass project.organizationId — the
    *  scoping key for the row. (Actor attribution lives on the audit
@@ -1350,14 +1386,6 @@ async function createQueuedDeploymentUnlocked(opts: {
   // be bypassed by the Redeploy button and by apply-update) and
   // triggerDeployment (webhook push, incoming webhooks, service-connection
   // auto-redeploy). Both gates no-op unless CLOUD_MODE.
-  if ((env.CLOUD_MODE || meta.deployTarget === "cloud") &&
-      (meta.volumes?.length || meta.composeServices?.some((service) => service.volumes?.length))) {
-    const project = await repos.project.findByIdInOrganization(opts.projectId, opts.organizationId);
-    const { usesCloudDockerWorkspace } = await import("../../lib/cloud-docker-workspace");
-    const docker = project && await shouldUseProjectServicePipeline(project, meta.composeServices) &&
-      await usesCloudDockerWorkspace(project, meta.serviceDeploymentMode);
-    if (!docker) throw new AppError("Persistent Compose volumes require a Docker workspace. Existing native cloud projects need a data migration before switching.", 400, "CLOUD_VOLUMES_UNSUPPORTED");
-  }
   await assertPlanAllowsDeployShape(opts.organizationId, {
     workload: snapshotToClass(meta).workload,
     targetServiceIds: meta.targetServiceIds ?? null,
@@ -1367,19 +1395,46 @@ async function createQueuedDeploymentUnlocked(opts: {
     // site. This is the same predicate the pipeline itself branches on, so the
     // gate and the executor can't disagree about what will run.
     usesServicePipeline: async () => {
-      const project = await repos.project.findById(opts.projectId).catch(() => null);
+      const project = await repos.project.findById(opts.projectId).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return null; });
       return project ? shouldUseProjectServicePipeline(project, meta.composeServices) : false;
     },
-  });
-  await assertBuildMinutesAvailable(opts.organizationId);
+  }, meta.managedWorkspaceId ?? null);
+  // An exact image refresh performs no build and must remain usable when the
+  // monthly build allowance is exhausted. Workload eligibility is still checked.
+  const { cloudDockerNeedsBuild } = await import("../../lib/resources");
+  const needsBuild = meta.composeServices?.length
+    ? cloudDockerNeedsBuild(meta.composeServices, strictRefreshImages(meta))
+    : !meta.refreshAppDeploymentId && !meta.releaseImageRef;
+  if (needsBuild) await assertBuildMinutesAvailable(opts.organizationId, meta.managedWorkspaceId ?? null);
   const insertDeployment = async () => {
     if (env.CLOUD_MODE) {
       const project = await repos.project.findByIdInOrganization(opts.projectId, opts.organizationId);
       if (!project) throw new AppError("Project not found", 404, "PROJECT_NOT_FOUND");
       const mode = await resolveServicePipelineMode(project, meta);
+      if (mode.useServicePipeline) {
+        // An exclusive migration/service deployment must not validate dormant
+        // routes belonging to services it will never activate.
+        const targetNames = meta.strictServiceScope && meta.targetServiceIds?.length
+          ? new Set((await repos.service.listByProject(project.id))
+              .filter(service => meta.targetServiceIds!.includes(service.id)).map(service => service.name))
+          : null;
+        await assertFreeEndpointsAllowed(opts.organizationId,
+          mode.servicePreflightServices.filter(service => service.enabled !== false && (!targetNames || targetNames.has(service.name)))
+            .flatMap(service => resolveServicePublicEndpoints(service, { projectSlug: project.slug })), {
+            capability: "managed-compose-domains", workspaceId: project.workspaceId,
+            knownHostnames: (await repos.domain.listByProject(project.id)).map(domain => domain.hostname),
+          });
+      }
+      const runsApplication = needsRunningApplication({
+        workload: snapshotToClass(meta).workload,
+        runtimeMode: meta.runtimeMode,
+        cloudStaticHosting: meta.cloudStaticHosting,
+        willRunServices: mode.useServicePipeline,
+        hasPrebuiltImage: Boolean(meta.releaseImageRef),
+      });
       meta = {
         ...meta,
-        cloudApplicationSlot: !mode.useServicePipeline && snapshotToClass(meta).workload !== "static",
+        cloudApplicationSlot: !mode.useServicePipeline && runsApplication,
         cloudServiceSlots: mode.useServicePipeline
           ? mode.servicePreflightServices.filter(service => service.enabled !== false).map(service => service.name)
           : [],
@@ -1387,9 +1442,11 @@ async function createQueuedDeploymentUnlocked(opts: {
       await assertCloudDeploymentLimits(opts.organizationId, {
         projectId: opts.projectId,
         resources: meta.resources, buildResources: meta.buildResources,
-        runsApplication: snapshotToClass(meta).workload !== "static",
+        runsApplication,
         services: mode.useServicePipeline ? mode.servicePreflightServices : undefined,
+        retainedImages: strictRefreshImages(meta),
       });
+
     }
 
     // Version is NOT assigned here. A version number represents a shipped
@@ -1399,15 +1456,16 @@ async function createQueuedDeploymentUnlocked(opts: {
 
     // The insert is atomic against the one-active-per-project index: undefined
     // means another deployment won/holds the slot (raced past checkNoActiveBuild,
-    // or a queued/building one already exists). Surface as a 403, same as the
-    // early-rejection path — no error-code/message inspection needed.
-    return repos.deployment.create({
+    // or a queued/building one already exists). Surface the same conflict as the
+    // early-rejection path, so automatic admissions can wait for the slot.
+    const admission: Parameters<typeof repos.deployment.create> = [{
       projectId: opts.projectId,
       organizationId: opts.organizationId,
       branch: opts.branch,
       commitSha: opts.commitSha,
       commitMessage: opts.commitMessage,
       trigger: opts.trigger ?? "manual",
+      actionRequestId: opts.actionRequestId,
       environment: opts.environment,
       framework: opts.framework,
       status: "queued",
@@ -1426,26 +1484,32 @@ async function createQueuedDeploymentUnlocked(opts: {
       forceAll: opts.forceAll ?? false,
       changedPaths: opts.changedPaths ?? null,
       changedPathsTruncated: opts.changedPathsTruncated ?? false,
-    });
+    }];
+    if (opts.resourceChanges || opts.actionLeaseOwner) admission[1] = opts.resourceChanges;
+    if (opts.actionLeaseOwner) admission[2] = opts.actionLeaseOwner;
+    return repos.deployment.create(...admission);
   };
   const dep = env.CLOUD_MODE
     ? await createProvisionLock(`cloud:service-quota:${opts.organizationId}`).run(insertDeployment)
     : await insertDeployment();
   if (!dep) {
-    throw new ForbiddenError(
+    throw new AppError(
       "Another deployment is already in progress for this project. Wait for it to finish or cancel it.",
+      409, "DEPLOYMENT_IN_PROGRESS",
     );
   }
 
   try {
-    await repos.deployment.createBuildSession({
+    if (!opts.resourceChanges) await repos.deployment.createBuildSession({
       deploymentId: dep.id,
       projectId: opts.projectId,
       status: "queued",
     });
   } catch (err) {
     // Atomicity: clean up orphaned deployment
-    await repos.deployment.deleteDeployment(dep.id).catch(() => {});
+    await repos.deployment.deleteDeployment(dep.id).catch((diagnosticFailure) => {
+      observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service");
+    });
     throw err;
   }
 
@@ -1457,7 +1521,7 @@ async function createQueuedDeploymentUnlocked(opts: {
   await repos.deployment
     .supersedeReconciling(opts.projectId, dep.id)
     .catch((err) =>
-      console.warn(`[build] supersede reconciling for ${opts.projectId} failed:`, err),
+      errorDiagnostics.warn("platform/engine/modules/deployments/build.service", `[build] supersede reconciling for ${opts.projectId} failed:`, err),
     );
 
   // Creating a new deployment IS the decision on any prior partial-failure
@@ -1469,9 +1533,11 @@ async function createQueuedDeploymentUnlocked(opts: {
   await repos.deployment
     .supersedePendingDecisions(opts.projectId, dep.id)
     .catch((err) =>
-      console.warn(`[build] supersede pending decisions for ${opts.projectId} failed:`, err),
+      errorDiagnostics.warn("platform/engine/modules/deployments/build.service", `[build] supersede pending decisions for ${opts.projectId} failed:`, err),
     );
 
+  const { cloudAnalytics } = await import("../cloud-analytics");
+  await cloudAnalytics.record({ ...opts.analyticsActor, organizationId: opts.organizationId }, "cloud_deployment_started", { project_id: opts.projectId, deployment_id: dep.id }, `deployment-started:${dep.id}`);
   return dep;
 }
 
@@ -1544,10 +1610,12 @@ export async function requestBuildAccess(
   }
   if (project.organizationId !== ctx.organizationId) throw new NotFoundError("Project", projectId);
   const deployEnvironment = resolveDeploymentEnvironment(project, environment);
+  const resolvedTarget = await resolveSnapshotTarget(project, { deployTarget, serverId, runtimeMode });
+  if (resolvedTarget.deployTarget === "cloud" && buildStrategy === "local")
+    throw new AppError("Managed servers build on the selected server. Choose a server build to continue.", 400, "MANAGED_SERVER_BUILD_STRATEGY");
   if (process.env.OPENSHIP_NATIVE === "true" && process.env.OPENSHIP_NATIVE_ALLOW_HOST_EXECUTION !== "true") {
     if (buildStrategy === "local" || deployTarget === "local")
       throw new AppError("Host execution is disabled by this native installation's policy", 403, "HOST_EXECUTION_DISABLED");
-    await resolveSnapshotTarget(project, { deployTarget, serverId, runtimeMode });
   }
   // Validate an explicit host-root capability before compose reconciliation,
   // route persistence, or deployment-row creation. Runtime/preflight reuse the
@@ -1573,6 +1641,14 @@ export async function requestBuildAccess(
   const uploadSession = input.uploadSessionId ? getFolderSession(input.uploadSessionId) : undefined;
   if (input.uploadSessionId && (!uploadSession || uploadSession.orgId !== ctx.organizationId || (uploadSession.projectId && uploadSession.projectId !== project.id))) {
     throw new AppError("Upload session not found or expired — re-upload the folder.", 400);
+  }
+  if (uploadSession) {
+    if (!uploadSession.uploaded || uploadSession.uploading || !uploadSession.stagingDir)
+      throw new AppError("Finish uploading the folder before deploying.", 409, "SOURCE_UPLOAD_INCOMPLETE");
+    if (env.CLOUD_MODE && (uploadSession.serverId !== project.serverId ||
+        uploadSession.managedWorkspaceId !== project.workspaceId))
+      throw new AppError("This source was uploaded for another server. Upload it again for this project.", 409, "CLOUD_WORKSPACE_TARGET_CONFLICT");
+    uploadSession.projectId = project.id;
   }
 
   // Resolve the deployment's project environment before parsing Compose. Image
@@ -1624,6 +1700,7 @@ export async function requestBuildAccess(
       sourceInfo = refreshed;
       refreshedUploadServices = refreshed.services;
     } catch (err) {
+      observeCaughtError(err, "platform/engine/modules/deployments/build.service");
       throw new AppError(
         `Could not refresh the uploaded Compose source: ${safeErrorMessage(err)}`,
         400,
@@ -1680,6 +1757,7 @@ export async function requestBuildAccess(
           project.rootDirectory ?? "",
         );
       } catch (err) {
+        observeCaughtError(err, "platform/engine/modules/deployments/build.service");
         throw new AppError(
           `Could not read uploaded project environment: ${safeErrorMessage(err)}`,
           400,
@@ -1925,6 +2003,12 @@ export async function requestBuildAccess(
     // Best-effort: a persist failure must never block the deploy.
     const composeOnly = effectiveServices.filter((s) => serviceKind(s) === "compose");
     if (composeOnly.length) {
+      const storedServices = await repos.service.listByProject(project.id);
+      const routes = composeEndpointChanges(composeOnly, storedServices);
+      await assertFreeEndpointsAllowed(project.organizationId, routes.endpoints, {
+        capability: "managed-compose-domains", workspaceId: project.workspaceId,
+        knownHostnames: routes.knownHostnames,
+      });
       // #342: these rows' custom hostnames become vhosts like any other, so they
       // carry the same shape gate as the service editors — and it runs on the set
       // ACTUALLY persisted, which includes the compose a folder upload adopts when
@@ -1934,8 +2018,7 @@ export async function requestBuildAccess(
       // syncProjectRouteState further down. Costs a query only when a custom service
       // hostname is actually declared; throws BEFORE the best-effort persist below.
       if (customHostnamesOf(composeOnly).length) {
-        const rows = await repos.service.listByProject(project.id).catch(() => []);
-        assertValidCustomDomains(composeOnly, { known: customHostnamesOf(rows) });
+        assertValidCustomDomains(composeOnly, { known: customHostnamesOf(storedServices) });
       }
       await repos.service
         // removeMissing: false — deploy-time sync creates and updates only. A
@@ -1945,8 +2028,8 @@ export async function requestBuildAccess(
         // running container (see syncFromCompose's docblock).
         .syncFromCompose(project.id, composeOnly, { removeMissing: false })
         .catch((err) =>
-          console.warn(
-            `[requestBuildAccess] failed to persist compose services: ${safeErrorMessage(err)}`,
+          errorDiagnostics.warn("platform/engine/modules/deployments/build.service",
+            `[requestBuildAccess] failed to persist compose services: ${safeErrorMessage(err)}`, err,
           ),
         );
     }
@@ -1959,28 +2042,15 @@ export async function requestBuildAccess(
 
   // Resolve the snapshot's target (deployTarget + serverId + runtimeMode) from
   // the single source of truth shared with triggerDeployment — UI override >
-  // cloudWorkspaceId > active-deployment meta. Keeps the two deploy entry points
+  // workspaceId > active-deployment meta. Keeps the two deploy entry points
   // from diverging on where a project deploys.
-  const resolvedTarget = await resolveSnapshotTarget(project, {
-    deployTarget,
-    serverId,
-    runtimeMode,
-  });
   Object.assign(snapshot, resolvedTarget);
 
-  // Folder-upload: point this deploy at the source the browser uploaded.
-  //   - cloud (oblien-direct): adopt the pre-provisioned workspace, skip clone.
-  //   - self-hosted (api-relay): build from the staging dir like a local folder.
-  // The session/workspace outlive this call (session TTL; workspace made
-  // permanent on deploy), so nothing is disposed here.
+  // Keep the validated upload capability with the snapshot. Cloud transfers
+  // only the session's source; a persisted path alone grants no filesystem access.
   if (uploadSession) {
-    if (uploadSession.mode === "oblien-direct") {
-      snapshot.uploadWorkspaceId = uploadSession.workspaceId;
-      snapshot.sourceStaged = true;
-      snapshot.deployTarget = "cloud";
-    } else {
-      snapshot.localPath = uploadSession.stagingDir;
-    }
+    snapshot.localPath = uploadSession.stagingDir;
+    snapshot.uploadSessionId = uploadSession.id;
   }
 
   // Persist an EXPLICIT runtime-isolation choice (the deploy "sandbox vs direct"
@@ -1994,8 +2064,8 @@ export async function requestBuildAccess(
     await repos.project
       .update(project.id, { runtimeMode })
       .catch((err) =>
-        console.warn(
-          `[requestBuildAccess] failed to persist runtimeMode: ${safeErrorMessage(err)}`,
+        errorDiagnostics.warn("platform/engine/modules/deployments/build.service",
+          `[requestBuildAccess] failed to persist runtimeMode: ${safeErrorMessage(err)}`, err,
         ),
       );
   }
@@ -2023,31 +2093,33 @@ export async function requestBuildAccess(
     snapshot.cloneStrategy = cloneStrategy;
   }
 
-  // Openship Cloud resource tier — only a SERVER-BACKED cloud (Oblien)
-  // deploy provisions a workspace sized by these resources. Both a web app and
-  // a worker run a long-lived container that must be sized; only a static
-  // (Pages) deploy has no workspace. Non-cloud targets keep the project's own
-  // resource config, so the picker is ignored for them. The resolved
-  // ResourceConfig rides the existing `snapshot.resources` plumbing →
-  // prodResources → runtime.deploy / ensureServiceGroup → cloud.ts.
+  // Cloud power is a container ceiling inside the selected server. It never
+  // allocates another VM. Bare applications share the host's resources directly.
   if (
     snapshot.deployTarget === "cloud" &&
-    snapshotToClass(snapshot).workload !== "static" &&
+    !(
+      snapshot.cloudStaticHosting === "pages" &&
+      snapshotToClass(snapshot).workload === "static" &&
+      !useServicePipeline &&
+      !snapshot.releaseImageRef
+    ) &&
+    ((snapshot.cloudStaticHosting === "server" && snapshotToClass(snapshot).workload === "static") ||
+      snapshot.runtimeMode !== "bare" ||
+      useServicePipeline ||
+      snapshot.framework === "docker" ||
+      snapshot.releaseImageRef) &&
     cloudResourceTier
   ) {
-    // The plan's per-service size cap, enforced HERE because Oblien cannot do it:
-    // its vCPU/RAM ceilings are per-workspace and applied namespace-wide, and a
-    // transient build workspace needs 4 vCPU / 8 GB — so the Oblien ceiling has to
-    // be build-sized and is useless as a cap on a runtime service. This is the
-    // point where the size is actually chosen, and it had NO bound of any kind:
-    // `cloudResourceCustom` carries no min/max, so a free org could ask for 1024
-    // vCPU and only find out from an opaque Oblien error mid-build.
-    await assertPlanAllowsResourceTier(ctx.organizationId, {
-      tier: cloudResourceTier,
-      cpuCores: cloudResourceCustom?.cpuCores ?? null,
-      memoryMb: cloudResourceCustom?.memoryMb ?? null,
-    });
-    snapshot.resources = resolveCloudResourceConfig(cloudResourceTier, cloudResourceCustom);
+    try {
+      snapshot.resources = decodeResources(cloudResourceTier === "custom"
+        ? cloudResourceCustom ?? {}
+        : resolveTierResources(cloudResourceTier));
+    } catch (error) {
+      observeCaughtError(error, "platform/engine/modules/deployments/build.service");
+      throw new ValidationError(error instanceof Error ? error.message : "Invalid resource limits");
+    }
+    await assertPlanAllowsResourceTier(ctx.organizationId, snapshot.resources,
+      snapshot.managedWorkspaceId ?? project.workspaceId ?? null);
   }
 
   // ── Preflight: validate config + domain before creating any resources ──
@@ -2057,12 +2129,9 @@ export async function requestBuildAccess(
     multiService: useServicePipeline,
     gitOwner: project.gitOwner,
     projectId: project.id,
-    // An app project carries its catalog id; a never-deployed one is the only
-    // deploy a host-capacity shortfall is allowed to refuse.
+    // Catalog apps receive an advisory host-capacity check.
     appTemplateId: project.appTemplateId,
-    firstDeploy: !project.activeDeploymentId,
   });
-  const env = deployEnvironment;
 
   // ── Resolve commit info from the branch HEAD ────
   const { commitSha, commitMessage } = await resolveLatestCommitInfo(ctx, project, snapshot.branch);
@@ -2074,12 +2143,13 @@ export async function requestBuildAccess(
   );
 
   const dep = await createQueuedDeployment({
+    analyticsActor: { userId: ctx.userId, source: ctx.source },
     projectId: project.id,
     organizationId: project.organizationId,
     branch: snapshot.branch,
     commitSha,
     commitMessage,
-    environment: env,
+    environment: deployEnvironment,
     framework: snapshot.framework,
     meta: await metaWithPrevious(snapshot, project),
     envVars: deploymentEnvVars,
@@ -2099,13 +2169,13 @@ export async function requestBuildAccess(
     // These arrive as a flat map with no per-variable flag. New keys therefore
     // use the name heuristic, while resolveSubmittedProjectEnv keeps an existing
     // row's explicit flag and (for an unreadable secret) its exact ciphertext.
-    await repos.project.mergeEnvVars(project.id, env, submittedProjectEnv, []);
+    await repos.project.mergeEnvVars(project.id, deployEnvironment, submittedProjectEnv, []);
   }
   if (sourceEnv.additions.length > 0) {
     // Add only missing source defaults after the optional wizard overlay.
     // This preserves the ownership rule: a saved/operator value always wins,
     // while headless and folder deploys gain newly declared defaults.
-    await repos.project.mergeEnvVars(project.id, env, sourceEnv.additions, []);
+    await repos.project.mergeEnvVars(project.id, deployEnvironment, sourceEnv.additions, []);
   }
 
   // Kick off the build BEFORE returning so the dashboard can attach via the
@@ -2141,23 +2211,28 @@ export async function cancelBuildSession(
 ) {
   const { dep, project } = await loadDeployment(deploymentId);
 
-  if (!["queued", "building", "deploying"].includes(dep.status)) {
+  const retryingCancellation = dep.status === "cancelled" &&
+    await repos.deployment.hasLiveBuildExecution(dep.id, dep.projectId);
+  if (!["queued", "building", "deploying"].includes(dep.status) && !retryingCancellation) {
     throw new ForbiddenError("Cannot cancel a deployment that is not in progress");
   }
+
+  const keepProvisioned = opts.keepProvisioned === true || (retryingCancellation &&
+    (dep.meta as { cancellation?: { keepProvisioned?: boolean } } | null)?.cancellation?.keepProvisioned === true);
 
   // Win the outcome in the database BEFORE cleanup or transport cancellation.
   // This closes the read→cancel race where the worker could publish `ready`
   // while this handler was still collecting its cleanup manifest. The repo
   // transition only accepts queued/building/deploying; a release that became
   // ready first is left untouched.
-  const cancellationMeta = opts.keepProvisioned
+  const cancellationMeta = keepProvisioned
     ? {
         ...((dep.meta as Record<string, unknown> | null) ?? {}),
         cancellation: { keepProvisioned: true },
       }
     : undefined;
   if (
-    !(await repos.deployment.cancelInFlight(
+    !retryingCancellation && !(await repos.deployment.cancelInFlight(
       dep.id,
       cancellationMeta ? { meta: cancellationMeta } : undefined,
     ))
@@ -2169,7 +2244,7 @@ export async function cancelBuildSession(
   // The image may already be complete while the worker is blocked in a prompt,
   // preflight, or a host-scoped provisioning lock; changing the DB row alone
   // leaves that worker holding the project lease indefinitely.
-  requestDeploymentCancellation(dep.id, { keepProvisioned: opts.keepProvisioned });
+  requestDeploymentCancellation(dep.id, { keepProvisioned: keepProvisioned || undefined });
   sessionManager.cancelPendingPrompt(dep.id);
 
   // Read after the cancellation transition: a queued worker may have claimed
@@ -2177,20 +2252,17 @@ export async function cancelBuildSession(
   // claim it, so this read identifies the actual cleanup owner.
   const buildSession = await repos.deployment.findBuildSessionByDeploymentId(deploymentId);
 
-  // 1. Abort the running build process. Best-effort - if the build already
-  //    finished or never started this is a no-op.
-  const { runtime } = platform();
-  if (dep.status === "building" && buildSession) {
-    await runtime.cancelBuild(buildSession.id).catch(() => {});
-  }
+  // The worker forwards cancellation to its actual build adapter, including
+  // when this request lands on another process. The process-wide default
+  // runtime here may be Bare while the worker is building Docker on a server.
 
-  // 2. Exactly ONE owner tears runtime resources down. A claimed worker owns
+  // 1. Exactly ONE owner tears runtime resources down. A claimed worker owns
   //    its build artifacts and containers and performs cancellation cleanup as
   //    it unwinds; racing it here can delete a resource between its activate and
   //    bookkeeping steps. Only a queued/unstarted deployment has no worker, so
   //    the handler owns that manifest. Volumes are never cleaned: cancel !=
   //    delete, and the user may retry.
-  if (opts.keepProvisioned) {
+  if (keepProvisioned) {
     console.log(`[CANCEL] ${dep.id}: keeping provisioned resources (record-only delete)`);
   } else if (!buildSession?.startedAt) {
     // protectRetained: a cancelled compose deploy carries the LIVE release's
@@ -2198,24 +2270,24 @@ export async function cancelBuildSession(
     // replaced yet, so an unprotected manifest tears down the running app.
     const manifest = await collectDeploymentManifest(dep, project, {
       protectRetained: true,
-    }).catch((): CleanupManifest => ({ projectId: dep.projectId, resources: [] }));
+    }).catch((diagnosticFailure): CleanupManifest => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return ({ projectId: dep.projectId, resources: [] }); });
     if (manifest.resources.length > 0) {
       await executeCleanup(manifest).catch((err) => {
         // Per-item failures are already isolated inside executeCleanup, so we
         // only land here on an unexpected crash. Log and continue - cancel
         // still has to mark the deployment cancelled, leak or no leak.
-        console.error(`[CANCEL] Cleanup crashed for ${dep.id}:`, err);
+        errorDiagnostics.error("platform/engine/modules/deployments/build.service", `[CANCEL] Cleanup crashed for ${dep.id}:`, err);
       });
     }
   } else {
     console.log(`[CANCEL] ${dep.id}: worker owns runtime cleanup while cancellation unwinds`);
   }
 
-  // 3. Surface service-level cancellation in the SSE stream so the UI stops
+  // 2. Surface service-level cancellation in the SSE stream so the UI stops
   //    showing per-service spinners.
   const snapshot = dep.meta as DeploymentConfigSnapshot | null;
   if (snapshot?.serviceDeploymentMode !== "single") {
-    const services = await repos.service.listByProject(dep.projectId).catch(() => []);
+    const services = await repos.service.listByProject(dep.projectId).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return []; });
     for (const svc of services) {
       sessionManager.broadcastServiceStatus(dep.id, {
         serviceName: svc.name,
@@ -2226,7 +2298,7 @@ export async function cancelBuildSession(
     }
   }
 
-  // 4. Persist the cancelled status + close the SSE stream.
+  // 3. Persist the cancelled status + close the SSE stream.
   // INVARIANT: cancel writes the DEPLOYMENT row only — NEVER the project row.
   // activeDeploymentId (the last successful release) is left untouched, so a
   // cancelled redeploy has zero effect on the project's live state.
@@ -2247,15 +2319,25 @@ export async function cancelBuildSession(
   // lease. If it cannot do so in the cooperative window, keep the result
   // explicitly pending: callers must not claim cancellation completed or offer
   // an immediate redeploy while the old worker may still touch the target host.
-  const quiescent = await waitForDeploymentQuiescence(dep.id, dep.projectId);
+  let quiescent = await waitForDeploymentQuiescence(dep.id, dep.projectId);
+  let recoveryWarning: string | undefined;
+  if (!quiescent && project.workspaceId) {
+    try {
+      const { recoverManagedDeploymentExecution } = await import("./deployment-recovery");
+      quiescent = await recoverManagedDeploymentExecution({ ...dep, status: "cancelled" }, project);
+    } catch (error) {
+      recoveryWarning = safeErrorMessage(error);
+      errorDiagnostics.warn("platform/engine/modules/deployments/build.service", `[CANCEL] ${dep.id}: recovery pending: ${recoveryWarning}`, error);
+    }
+  }
   if (!quiescent) {
     return {
       success: false,
       pending: true,
       status: "cancelling" as const,
       message:
-        "Cancellation was requested, but the deployment worker is still stopping. " +
-        "Redeploy remains blocked until cancellation finishes.",
+        recoveryWarning ?? ("Cancellation was requested, but the deployment worker is still stopping. " +
+        "Redeploy remains blocked until cancellation finishes."),
     };
   }
 
@@ -2280,11 +2362,7 @@ export async function redeployBuildSession(
   // short-circuits without catching it — guard explicitly here too, matching
   // triggerDeployment. Otherwise "Apply update" no-ops on the adopt deployment
   // and fakes success while the running control plane is untouched.
-  if (project.appTemplateId === "openship") {
-    throw new ForbiddenError(
-      "The Openship control plane updates itself — run `openship update` on the host, not a redeploy.",
-    );
-  }
+  assertNotControlPlane(project);
   // GitHub access gate (default-deny): a member can redeploy a
   // GitHub-backed project only when granted this repo.
   await assertGitHubRepoAccess(ctx, {
@@ -2403,7 +2481,7 @@ export async function redeployBuildSession(
     await repos.project.mergeEnvVars(project.id, oldDep.environment, sourceEnv.additions, []);
   }
 
-  const currentComposeRows = await listProjectComposeServices(project.id).catch(() => []);
+  const currentComposeRows = await listProjectComposeServices(project.id).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return []; });
   const currentComposeServices = projectServicesToDeployableServices(
     currentComposeRows.filter((s) => s.enabled),
   );
@@ -2426,6 +2504,7 @@ export async function redeployBuildSession(
   // Service-scoped rows stay out of this flat capture: the compose deployer
   // reads them live per service and applies them after compose inline env.
   const dep = await createQueuedDeployment({
+    analyticsActor: { userId: ctx.userId, source: ctx.source },
     projectId: project.id,
     organizationId: project.organizationId,
     branch,
@@ -2501,9 +2580,7 @@ export async function startBuild(deploymentId: string) {
   };
 }
 
-export async function triggerDeployment(
-  ctx: RequestContext,
-  data: {
+export interface DeploymentTriggerInput {
     projectId: string;
     /**
      * Explicit registered-server target for CLI/API deploys. It is resolved by
@@ -2585,30 +2662,41 @@ export async function triggerDeployment(
      * builder. Dashboard "Refresh" button.
      */
     refresh?: boolean;
+    /** Internal reviewed resource edit, never accepted from an HTTP deployment body. */
+    resourceChanges?: DeploymentResourceChanges;
     /**
      * Release/dist source: deploy THIS specific version (the `release` webhook
      * passes the published tag). Omitted for a manual redeploy, which re-resolves
      * the newest advertised version. Ignored for non-release projects.
      */
     releaseVersion?: string;
-  },
-) {
+  /** Internal Actions admission receipt; public deployment inputs cannot set it. */
+  actionRequestId?: string;
+  actionLeaseOwner?: string;
+  actionEvent?: Record<string, unknown>;
+}
+
+export async function triggerDeployment(ctx: RequestContext, data: DeploymentTriggerInput) {
   const project = await repos.project.findById(data.projectId);
   // Recheck the ownership invariant at the engine boundary too: a project may
   // have moved since application authorization resolved its organization.
   if (!project || project.organizationId !== ctx.organizationId) {
     throw new NotFoundError("Project", data.projectId);
   }
+  if (data.actionRequestId) {
+    const existing = await repos.actions.deploymentForActionRequest(ctx.organizationId, data.actionRequestId);
+    if (existing && existing.projectId === project.id) {
+      assertNotControlPlane(project);
+      if (existing.status === "queued") await kickoffBuild(project, existing);
+      return { deployment: existing, skipped: true as const };
+    }
+  }
   const environment = resolveDeploymentEnvironment(project, data.environment);
   if (data.serverId) await requireOrgServer(data.serverId, ctx.organizationId);
   // The Openship control plane IS the running host service, not a redeployable
   // workload — it updates itself via the CLI. It's a release-provider project, so
   // the git/localPath 403 below would NOT catch it; guard it explicitly.
-  if (project.appTemplateId === "openship") {
-    throw new ForbiddenError(
-      "The Openship control plane updates itself — run `openship update` on the host, not a redeploy.",
-    );
-  }
+  assertNotControlPlane(project);
   // Org-membership verified at the route boundary. No userId equality
   // check here — that would block team members.
 
@@ -2631,7 +2719,7 @@ export async function triggerDeployment(
       : snapshotNeedsProjectSource(
           { hasBuild: project.hasBuild ?? undefined },
           projectServicesToDeployableServices(
-            (await listProjectComposeServices(project.id).catch(() => [])).filter((s) => s.enabled),
+            (await listProjectComposeServices(project.id).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return []; })).filter((s) => s.enabled),
           ),
         );
     if (sourceless) {
@@ -2659,14 +2747,19 @@ export async function triggerDeployment(
   // written in the same alphabet. See canonicalizeCommitRef.
   const requestedCommitSha = await canonicalizeCommitRef(ctx, project, data.commitSha);
 
+  if (data.trigger === "webhook") {
+    const request = await (await import("../actions/deployment-gate")).queueActionDeployment(ctx, project, { ...data, branch, commitSha: requestedCommitSha });
+    if (request) return { awaitingActions: request, deployment: undefined, skipped: true as const };
+  }
+
   // Skip an auto (webhook) deploy whose commit is already in-flight or live —
   // closes the App + repo-webhook double-deploy window. Manual/forceAll bypass.
   if (data.trigger === "webhook" && !data.forceAll && requestedCommitSha) {
     const inFlight = await repos.deployment
       .findInProgressByCommit(project.id, requestedCommitSha)
-      .catch(() => undefined);
+      .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return undefined; });
     const active = project.activeDeploymentId
-      ? await findActiveDeployment(project).catch(() => null)
+      ? await findActiveDeployment(project).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return null; })
       : null;
     const existing =
       inFlight ??
@@ -2704,11 +2797,14 @@ export async function triggerDeployment(
   }
 
   if (!data.reuseSnapshot && data.trigger !== "rollback") {
-    let sourceInfo: SourceEnvInfo | undefined = await reconcileComposeSource(ctx, project, branch, {
+    // Required checks approve the entire source tree at this commit, including
+    // Compose and lifecycle configuration. Do not re-read those files at HEAD.
+    const sourceRef = data.actionRequestId ? requestedCommitSha! : branch;
+    let sourceInfo: SourceEnvInfo | undefined = await reconcileComposeSource(ctx, project, sourceRef, {
       changedPaths: data.changedPaths,
       interpolationEnv: decryptEnvMap(encryptedEnvVars ?? {}),
     });
-    sourceInfo ??= await resolveLifecycleSourceEnv(ctx, project, branch);
+    sourceInfo ??= await resolveLifecycleSourceEnv(ctx, project, sourceRef);
     const sourceEnv = mergeSourceEnvDefaults(encryptedEnvVars, sourceInfo);
     encryptedEnvVars = sourceEnv.encrypted;
     if (sourceEnv.additions.length > 0) {
@@ -2725,6 +2821,7 @@ export async function triggerDeployment(
     try {
       assertExactServiceTargets(await repos.service.listByProject(project.id), data.serviceIds);
     } catch (err) {
+      observeCaughtError(err, "platform/engine/modules/deployments/build.service");
       throw new AppError(safeErrorMessage(err), 400);
     }
   }
@@ -2749,8 +2846,8 @@ export async function triggerDeployment(
   // last deployed to — that lives in the deployment meta), so without this a
   // redeploy/webhook of a self-hosted *server* project loses its target and, on a
   // SaaS instance, defaults to cloud → wrong cloud preflight → 403. The resolver
-  // gates serverId on target==="server" so a non-server deploy can't carry a stale
-  // serverId. (reuse/rollback already carries the frozen target — leave it.)
+  // retains serverId for connected and managed hosts while discarding stale
+  // identities on direct Cloud targets. Reuse/rollback carries its frozen target.
   if (!reuse) {
     const resolvedTarget = await resolveSnapshotTarget(
       project,
@@ -2798,7 +2895,7 @@ export async function triggerDeployment(
   let refreshActive: Awaited<ReturnType<typeof repos.deployment.findById>> | null = null;
   if (data.refresh) {
     refreshActive = project.activeDeploymentId
-      ? await findActiveDeployment(project).catch(() => null)
+      ? await findActiveDeployment(project).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return null; })
       : null;
     if (!refreshActive) {
       throw new AppError("Nothing to refresh yet — deploy the project first.", 409);
@@ -2830,10 +2927,8 @@ export async function triggerDeployment(
     multiService: useServicePipeline,
     gitOwner: project.gitOwner,
     projectId: project.id,
-    // An app project carries its catalog id; a never-deployed one is the only
-    // deploy a host-capacity shortfall is allowed to refuse.
+    // Catalog apps receive an advisory host-capacity check.
     appTemplateId: project.appTemplateId,
-    firstDeploy: !project.activeDeploymentId,
   });
 
   // ── Resolve commit info: fetch HEAD from GitHub if not provided ────
@@ -2909,7 +3004,7 @@ export async function triggerDeployment(
   //    is ALSO a refresh service → excluded from the build → empty buildable →
   //    the build phase (and its clone) is skipped entirely. ──
   if (data.refresh) {
-    const enabledIds = (await repos.service.listByProject(project.id).catch(() => []))
+    const enabledIds = (await repos.service.listByProject(project.id).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/build.service"); return []; }))
       .filter((s) => s.enabled)
       .map((s) => s.id);
     // Target precedence: explicit serviceIds (per-service refresh from the UI)
@@ -2946,12 +3041,15 @@ export async function triggerDeployment(
   }
 
   const dep = await createQueuedDeployment({
+    analyticsActor: { userId: ctx.userId, source: ctx.source },
     projectId: project.id,
     organizationId: project.organizationId,
     branch,
     commitSha,
     commitMessage,
     trigger: data.trigger ?? "manual",
+    actionRequestId: data.actionRequestId,
+    actionLeaseOwner: data.actionLeaseOwner,
     environment,
     framework: snapshot.framework,
     meta: await metaWithPrevious(snapshot, project),
@@ -2962,6 +3060,7 @@ export async function triggerDeployment(
     serviceIds: finalServiceIds,
     refreshServiceIds,
     strictServiceScope: data.strictServiceScope,
+    resourceChanges: data.resourceChanges,
     changedPaths: resolvedChangedPaths ?? null,
   });
 
