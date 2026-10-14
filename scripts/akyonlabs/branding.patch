@@ -6,21 +6,21 @@ index 0000000..547c97e
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#101113"/><g transform="translate(6 13) scale(.18)" fill="#f4f4f5"><path d="M8 198 103 12h44L49 198Z M158 12h8v186h-38v-38H83l19-38h26V71Z M184 12h39v186h-39Z M235 161h51v37h-51Z"/></g></svg>
 diff --git a/apps/dashboard/src/app/(dashboard)/layout.tsx b/apps/dashboard/src/app/(dashboard)/layout.tsx
-index 06947c1..1bdf34f 100644
+index 9b512fc..abb88ac 100644
 --- a/apps/dashboard/src/app/(dashboard)/layout.tsx
 +++ b/apps/dashboard/src/app/(dashboard)/layout.tsx
-@@ -135,10 +135,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
+@@ -150,10 +150,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
      );
    }
  
 -  const initialGithubData = await serverApi
 -    .get("github/home", { cache: "no-store" })
--    .catch(() => null);
+-    .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "dashboard/app/(dashboard)/layout"); return null; });
 -
    // Resolve the rail HERE, on the server, so the first painted sidebar is already
    // the right one. Doing it client-side from document.cookie would render the
    // platform rail and then flip the entire nav after hydration. Passing the
-@@ -147,7 +143,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
+@@ -162,7 +158,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
  
    return (
      <DashboardProviders
@@ -28,37 +28,11 @@ index 06947c1..1bdf34f 100644
        initialUser={session.user}
        selfHosted={deploymentInfo.selfHosted}
        deployMode={deploymentInfo.deployMode}
-diff --git a/apps/dashboard/src/app/(dashboard)/providers.tsx b/apps/dashboard/src/app/(dashboard)/providers.tsx
-index d6c6a0b..621a40a 100644
---- a/apps/dashboard/src/app/(dashboard)/providers.tsx
-+++ b/apps/dashboard/src/app/(dashboard)/providers.tsx
-@@ -26,12 +26,10 @@ interface DashboardProvidersProps {
-   machineName?: string;
-   hostDomain?: string;
-   initialUser?: AuthUser | null;
--  initialGithubData?: any;
- }
- 
- export function DashboardProviders({
-   children,
--  initialGithubData,
-   initialUser,
-   selfHosted,
-   deployMode,
-@@ -66,7 +64,7 @@ export function DashboardProviders({
-         machineName={machineName}
-         hostDomain={hostDomain}
-       >
--        <GitHubProvider initialData={initialGithubData}>
-+        <GitHubProvider>
-           <CloudProvider>
-             {/* Mounted only in mail view: it fetches the mail-server registry on
-                 every page, and that call SSH-scans when the registry is empty
 diff --git a/apps/dashboard/src/app/layout.tsx b/apps/dashboard/src/app/layout.tsx
-index 551876d..7fb2f3b 100644
+index 85a54d4..e019a21 100644
 --- a/apps/dashboard/src/app/layout.tsx
 +++ b/apps/dashboard/src/app/layout.tsx
-@@ -62,17 +62,11 @@ const BASE_METADATA: Metadata = {
+@@ -63,17 +63,11 @@ const BASE_METADATA: Metadata = {
    description: "Manage your deployments, domains, and infrastructure.",
    icons: {
      icon: [
@@ -78,22 +52,23 @@ index 551876d..7fb2f3b 100644
    manifest: '/site.webmanifest',
  };
 diff --git a/apps/dashboard/src/app/not-found.tsx b/apps/dashboard/src/app/not-found.tsx
-index 4a79d9b..9596b2c 100644
+index b33f4b5..52ecb3b 100644
 --- a/apps/dashboard/src/app/not-found.tsx
 +++ b/apps/dashboard/src/app/not-found.tsx
-@@ -1,5 +1,4 @@
+@@ -1,6 +1,5 @@
+ import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
  import { getSession, getDeploymentInfo } from "@/lib/server/session";
 -import { serverApi } from "@/lib/server/api";
  import { AuthShell } from "@/components/auth-shell";
  import { Sidebar } from "@/components/sidebar";
  import { NotFoundContent } from "@/components/not-found-content";
-@@ -28,13 +27,8 @@ export default async function NotFound() {
+@@ -29,13 +28,8 @@ export default async function NotFound() {
      return <AuthShell maxWidth="max-w-[520px]">{body}</AuthShell>;
    }
  
 -  const initialGithubData = await serverApi
 -    .get("github/home", { cache: "no-store" })
--    .catch(() => null);
+-    .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "dashboard/app/not-found"); return null; });
 -
    return (
      <DashboardProviders
@@ -126,71 +101,6 @@ index 0c42b4e..115c426 100644
 +    </svg>
    );
  }
-diff --git a/apps/dashboard/src/context/GitHubContext.tsx b/apps/dashboard/src/context/GitHubContext.tsx
-index c7b857c..44ae368 100644
---- a/apps/dashboard/src/context/GitHubContext.tsx
-+++ b/apps/dashboard/src/context/GitHubContext.tsx
-@@ -131,7 +131,6 @@ export function useGitHub() {
- 
- interface GitHubProviderProps {
-   children: React.ReactNode;
--  initialData?: any;
- }
- 
- const EMPTY_STATE: GitHubConnectionState = {
-@@ -166,7 +165,7 @@ function availableOwner(current: string, login: string, accounts: GitHubAccount[
- const GITHUB_REDIRECT_TIMEOUT_MS = 10 * 60 * 1000;
- const GITHUB_REDIRECT_POLL_MS = 2000;
- 
--export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
-+export function GitHubProvider({ children }: GitHubProviderProps) {
-   // Note: setSelfHosted is no longer driven from this context — the
-   // global platform mode is owned by PlatformContext and read from
-   // env.CLOUD_MODE during the initial dashboard layout. We deliberately
-@@ -174,20 +173,18 @@ export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
-   const { showToast } = useToast();
-   const { t } = useI18n();
-   const [installationSelection, setInstallationSelection] = useState<GitHubInstallationSelection | null>(null);
--  const [state, setState] = useState<GitHubConnectionState>(initialData?.state ?? EMPTY_STATE);
-+  const [state, setState] = useState<GitHubConnectionState>(EMPTY_STATE);
-   const [connecting, setConnecting] = useState(false);
--  const [loading, setLoading] = useState(!initialData);
-+  const [loading, setLoading] = useState(true);
- 
-   const [cliAction, setCliAction] = useState<CliAction | null>(null);
--  const [accounts, setAccounts] = useState<GitHubAccount[]>(initialData?.accounts || []);
--  const [userLogin, setUserLogin] = useState(primaryLogin(initialData?.state ?? EMPTY_STATE));
--  const [selectedOwner, setSelectedOwnerState] = useState(() => availableOwner("", userLogin, initialData?.accounts ?? [], initialData?.repos ?? []));
--  const [repos, setRepos] = useState<GitHubRepo[]>(initialData?.repos || []);
-+  const [accounts, setAccounts] = useState<GitHubAccount[]>([]);
-+  const [userLogin, setUserLogin] = useState("");
-+  const [selectedOwner, setSelectedOwnerState] = useState("");
-+  const [repos, setRepos] = useState<GitHubRepo[]>([]);
-   const [loadingRepos, setLoadingRepos] = useState(false);
--  const [installUrl, setInstallUrl] = useState<string | null>(initialData?.installUrl || null);
--  const [capabilities, setCapabilities] = useState<GitHubCapabilities | null>(
--    initialData?.capabilities ?? null,
--  );
-+  const [installUrl, setInstallUrl] = useState<string | null>(null);
-+  const [capabilities, setCapabilities] = useState<GitHubCapabilities | null>(null);
-   const initRef = useRef(false);
-   // In-flight refresh promise — multiple triggers (mount effect,
-   // connect-flow follow-ups, pollConnect tick, etc.) collapse to ONE
-@@ -276,13 +273,10 @@ export function GitHubProvider({ children, initialData }: GitHubProviderProps) {
- 
-   /* ── On mount ───────────────────────────────────────────────── */
-   useEffect(() => {
--    // If we have SSR initialData, don't double fetch!
--    if (initialData) return;
--
-     if (initRef.current) return;
-     initRef.current = true;
-     refresh();
--  }, [refresh, initialData]);
-+  }, [refresh]);
- 
-   useEffect(() => {
-     const onSourcesChanged = () => void refresh(true);
 diff --git a/apps/dashboard/src/lib/product-view.ts b/apps/dashboard/src/lib/product-view.ts
 index c87c031..1db775a 100644
 --- a/apps/dashboard/src/lib/product-view.ts
