@@ -5,77 +5,28 @@ index 0000000..547c97e
 +++ b/apps/dashboard/public/akyonlabs-favicon.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#101113"/><g transform="translate(6 13) scale(.18)" fill="#f4f4f5"><path d="M8 198 103 12h44L49 198Z M158 12h8v186h-38v-38H83l19-38h26V71Z M184 12h39v186h-39Z M235 161h51v37h-51Z"/></g></svg>
-diff --git a/apps/dashboard/src/app/(dashboard)/layout.tsx b/apps/dashboard/src/app/(dashboard)/layout.tsx
-index 9b512fc..abb88ac 100644
---- a/apps/dashboard/src/app/(dashboard)/layout.tsx
-+++ b/apps/dashboard/src/app/(dashboard)/layout.tsx
-@@ -150,10 +150,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
-     );
-   }
- 
--  const initialGithubData = await serverApi
--    .get("github/home", { cache: "no-store" })
--    .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "dashboard/app/(dashboard)/layout"); return null; });
--
-   // Resolve the rail HERE, on the server, so the first painted sidebar is already
-   // the right one. Doing it client-side from document.cookie would render the
-   // platform rail and then flip the entire nav after hydration. Passing the
-@@ -162,7 +158,6 @@ export default async function DashboardLayout({ children }: { children: React.Re
- 
-   return (
-     <DashboardProviders
--      initialGithubData={initialGithubData}
-       initialUser={session.user}
-       selfHosted={deploymentInfo.selfHosted}
-       deployMode={deploymentInfo.deployMode}
 diff --git a/apps/dashboard/src/app/layout.tsx b/apps/dashboard/src/app/layout.tsx
-index 85a54d4..e019a21 100644
+index cf2c2de..3dbb7aa 100644
 --- a/apps/dashboard/src/app/layout.tsx
 +++ b/apps/dashboard/src/app/layout.tsx
-@@ -63,17 +63,11 @@ const BASE_METADATA: Metadata = {
+@@ -61,16 +61,8 @@ export const dynamic = "force-dynamic";
+ const BASE_METADATA: Metadata = {
    description: "Manage your deployments, domains, and infrastructure.",
    icons: {
-     icon: [
--      { url: '/favicon.ico' },
--      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
--      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
-+      { url: '/akyonlabs-favicon.svg', type: 'image/svg+xml' },
-     ],
-     apple: [
-       { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
-     ],
+-    icon: [
+-      { url: "/favicon.ico" },
+-      { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+-      { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+-    ],
++    icon: [{ url: "/akyonlabs-favicon.svg", type: "image/svg+xml" }],
+     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
 -    other: [
--      { url: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
--      { url: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
+-      { url: "/android-chrome-192x192.png", sizes: "192x192", type: "image/png" },
+-      { url: "/android-chrome-512x512.png", sizes: "512x512", type: "image/png" },
 -    ],
    },
-   manifest: '/site.webmanifest',
+   manifest: "/site.webmanifest",
  };
-diff --git a/apps/dashboard/src/app/not-found.tsx b/apps/dashboard/src/app/not-found.tsx
-index b33f4b5..52ecb3b 100644
---- a/apps/dashboard/src/app/not-found.tsx
-+++ b/apps/dashboard/src/app/not-found.tsx
-@@ -1,6 +1,5 @@
- import { reportCaughtError as observeCaughtError } from "@repo/core/diagnostics";
- import { getSession, getDeploymentInfo } from "@/lib/server/session";
--import { serverApi } from "@/lib/server/api";
- import { AuthShell } from "@/components/auth-shell";
- import { Sidebar } from "@/components/sidebar";
- import { NotFoundContent } from "@/components/not-found-content";
-@@ -29,13 +28,8 @@ export default async function NotFound() {
-     return <AuthShell maxWidth="max-w-[520px]">{body}</AuthShell>;
-   }
- 
--  const initialGithubData = await serverApi
--    .get("github/home", { cache: "no-store" })
--    .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "dashboard/app/not-found"); return null; });
--
-   return (
-     <DashboardProviders
--      initialGithubData={initialGithubData}
-       initialUser={session.user}
-       selfHosted={deploymentInfo.selfHosted}
-       deployMode={deploymentInfo.deployMode}
 diff --git a/apps/dashboard/src/components/logo.tsx b/apps/dashboard/src/components/logo.tsx
 index 0c42b4e..115c426 100644
 --- a/apps/dashboard/src/components/logo.tsx
