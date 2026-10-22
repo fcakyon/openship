@@ -44,7 +44,17 @@ docker exec openship-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB
 openship update
 actual=$(openship --version)
 [[ "$actual" == *"$version"* ]] || { echo "Release changed during build; rerun this command. Backup: $backup" >&2; exit 1; }
-printf 'services:\n  api:\n    image: %s\n    pull_policy: never\n  dashboard:\n    image: %s\n    pull_policy: never\n' "$api_image" "$image" > "$state/dashboard.yml"
+cat > "$state/dashboard.yml" <<EOF
+services:
+  api:
+    image: $api_image
+    pull_policy: never
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+  dashboard:
+    image: $image
+    pull_policy: never
+EOF
 cd "$compose"
 docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --no-deps api dashboard
 for attempt in {1..30}; do
