@@ -67,3 +67,84 @@ index c87c031..1db775a 100644
  }
  
  export type ResolveProductViewInput = {
+diff --git a/apps/api/src/modules/github/webhook-push.ts b/apps/api/src/modules/github/webhook-push.ts
+index dd3c61272..4da9eb5f8 100644
+--- a/apps/api/src/modules/github/webhook-push.ts
++++ b/apps/api/src/modules/github/webhook-push.ts
+@@ -12,7 +12,7 @@ import {
+ } from "@repo/platform/engine/modules/github/github.service";
+ import { cloudFetchAsOrgOwner } from "@repo/platform/engine/lib/cloud/transport";
+ import { fetchOrgCloudProjects } from "@repo/platform/engine/lib/cloud/projects";
+-import { safeErrorMessage, normalizeProjectRootDirectory } from "@repo/core";
++import { safeErrorMessage } from "@repo/core";
+ import {
+   extractChangedFiles,
+   routeServicesByChanges,
+@@ -131,8 +131,7 @@ async function deployProjectFromPush(
+   const enabledServices = services.filter((s) => s.enabled);
+ 
+   // Treat compose- and monorepo-kind services as "real" routable
+-  // services. A project with zero such rows is a single-app
+-  // project and always rebuilds (no smart routing to do).
++  // services. Single-app projects use the shared path policy below.
+   const routableServices = enabledServices.filter(
+     (s) => s.kind === "compose" || s.kind === "monorepo",
+   );
+@@ -184,7 +183,7 @@ async function deployProjectFromPush(
+       routingReason = routingReason ?? "force-deploy-next";
+     }
+ 
+-    if (!forceAll && routableServices.length === 0 && normalizeProjectRootDirectory(p.rootDirectory ?? undefined)) {
++    if (!forceAll) {
+       // Compare with the deployed release, not just this push's before SHA: a
+       // previous failed deployment may contain app changes still waiting to ship.
+       const active = p.activeDeploymentId ? await repos.deployment.findById(p.activeDeploymentId) : null;
+diff --git a/packages/platform/src/engine/modules/github/project-change-impact.ts b/packages/platform/src/engine/modules/github/project-change-impact.ts
+index 8dbf9db58..04cbf2df5 100644
+--- a/packages/platform/src/engine/modules/github/project-change-impact.ts
++++ b/packages/platform/src/engine/modules/github/project-change-impact.ts
+@@ -1,4 +1,4 @@
+-/** Read-only impact analysis for a project rooted inside a JS workspace.
++/** Read-only path policies and workspace dependency analysis.
+  * Unknown metadata always deploys. No repository scripts or Turbo binaries run
+  * in the control plane. All reads use the existing authorized GitHub boundary. */
+ import { diagnostics } from "@repo/core/diagnostics";
+@@ -104,7 +104,6 @@ export async function resolveProjectChangeImpact(
+   commitSha?: string | null,
+ ): Promise<ProjectChangeImpact> {
+   const root = normalizeProjectRootDirectory(project.rootDirectory ?? undefined);
+-  if (!root) return { affected: true, reason: "repository-root" };
+   if (!files.length || files.some((file) => !file || normalizeRepoPath(file) !== file))
+     return { affected: true, reason: "unknown-changes" };
+   const global = classifyChangedFiles(files, {
+@@ -144,7 +143,7 @@ export async function resolveProjectChangeImpact(
+     });
+   try {
+     // The selected app's policy takes precedence over a repository-wide policy.
+-    const appConfig = await read(`${root}/openship.json`);
++    const appConfig = root ? await read(`${root}/openship.json`) : null;
+     const configText = appConfig ?? (await read("openship.json"));
+     let policy;
+     if (configText !== null) {
+diff --git a/packages/platform/src/engine/modules/projects/project-crud.service.ts b/packages/platform/src/engine/modules/projects/project-crud.service.ts
+index 30e1a905b..54dc5d33c 100644
+--- a/packages/platform/src/engine/modules/projects/project-crud.service.ts
++++ b/packages/platform/src/engine/modules/projects/project-crud.service.ts
+@@ -55,7 +55,6 @@ import {
+   readApiVersion,
+ } from "../../lib/release-resolver";
+ import { resolveLatestImageDigest } from "../../lib/image-registry";
+-import { normalizeProjectRootDirectory } from "../../lib/project-root-detector";
+ import { env } from "../../config/index";
+ import { assertResourceInOrg } from "../../lib/resource-access";
+ import type { ExecutionContext as RequestContext } from "@repo/platform";
+@@ -2545,8 +2544,7 @@ export async function evaluateDrift(
+     // drift — otherwise a project deployed at `1eeaf76` is told a new commit
+     // `1eeaf76` is available, forever. See compareCommitSha.
+     let behind = compareCommitSha(latestSha, deployedSha) === "different";
+-    const root = normalizeProjectRootDirectory(p.rootDirectory ?? undefined);
+-    if (behind && ctx && root) {
++    if (behind && ctx) {
+       const compare = await compareCommits(ctx, p.gitOwner!, p.gitRepo!, deployedSha!, latestSha!);
+       if (compare && !compare.truncated) {
+         behind = (await resolveProjectChangeImpact(ctx, p, compare.files, latestSha)).affected;
