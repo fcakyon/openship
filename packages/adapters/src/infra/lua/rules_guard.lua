@@ -10,6 +10,11 @@
 -- config if behind a trusted proxy. No user-supplied value is ever used as a
 -- Lua pattern or written into a response header.
 
+local geo_ok, geo = pcall(require, "openship.geo_country")
+local country = (geo_ok and geo.get_country_code(ngx.var.remote_addr)) or nil
+ngx.ctx.openship_country = country or false
+ngx.req.set_header("X-OpenShip-Country", country)
+
 local rules = ngx.shared.rules
 if not rules then return end
 
@@ -50,16 +55,6 @@ local deny_status = spec.blockStatus or 403
 local ips = ngx.var.remote_addr or "0.0.0.0"
 local ipi = lib.ipv4_to_int(ips)
 
--- Country resolved at most once per request (only when a country rule exists).
-local country_cache
-local function country_of()
-    if country_cache == nil then
-        local ok, geo = pcall(require, "openship.geo_country")
-        country_cache = (ok and geo and geo.get_country_code(ips)) or false
-    end
-    return country_cache or nil
-end
-
 -- ── 1. Access: method allow-list, IP allow/deny, country allow-list ──
 local access = spec.access
 if access then
@@ -71,7 +66,7 @@ if access then
         return ngx.exit(deny_status)
     end
     -- Allow-list: an unresolved country is not on the list → blocked (default-deny).
-    if access.allowCountries and not access.allowCountries[country_of() or ""] then
+    if access.allowCountries and not access.allowCountries[country or ""] then
         return ngx.exit(deny_status)
     end
 end
@@ -83,7 +78,7 @@ if ban then
         return ngx.exit(deny_status)
     end
     if ban.countries then
-        local cc = country_of()
+        local cc = country
         -- Fail CLOSED (matches the allow-list above): if geo is unavailable we
         -- cannot prove the client is NOT from a banned country, so block rather
         -- than silently letting banned traffic through. A blocked host is a loud

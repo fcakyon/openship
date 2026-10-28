@@ -185,15 +185,13 @@ describe("rules_guard.lua keeps the properties its comments promise", () => {
   });
 
   it("treats an unresolved country as off a country ALLOW-list (default-deny)", () => {
-    expect(guard).toContain('access.allowCountries[country_of() or ""]');
+    expect(guard).toContain('access.allowCountries[country or ""]');
   });
 
-  it("resolves geo at most once per request, and only when a rule needs it", () => {
-    // `country_of()` is memoized (including the negative result) because the lookup
-    // is the most expensive thing on this path.
-    expect(guard).toContain("if country_cache == nil then");
-    expect(guard).toContain("country_cache or nil");
-    expect(guard).toContain("pcall(require, \"openship.geo_country\")");
+  it("forwards the resolved country before hosts without rules return", () => {
+    expect(guard).toContain('ngx.req.set_header("X-OpenShip-Country", country)');
+    expect(guard).toContain('geo.get_country_code(ngx.var.remote_addr)');
+    expect(guard.indexOf('ngx.req.set_header')).toBeLessThan(guard.indexOf('local rules ='));
   });
 
   it("returns early when the host has no rules (the common case)", () => {
