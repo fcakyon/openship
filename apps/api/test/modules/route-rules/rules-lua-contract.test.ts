@@ -189,9 +189,17 @@ describe("rules_guard.lua keeps the properties its comments promise", () => {
   });
 
   it("forwards the resolved country before hosts without rules return", () => {
-    expect(guard).toContain('ngx.req.set_header("X-OpenShip-Country", country)');
-    expect(guard).toContain('geo.get_country_code(ngx.var.remote_addr)');
+    expect(guard).toContain('ngx.req.set_header("x-visitor-country", country)');
+    expect(guard).toContain('pcall(geo.get_country_code, ngx.var.remote_addr)');
     expect(guard.indexOf('ngx.req.set_header')).toBeLessThan(guard.indexOf('local rules ='));
+  });
+
+  it("memoizes country hits and misses for the request and protects lookup failures", () => {
+    expect(guard).toContain("local country = ngx.ctx.openship_country");
+    expect(guard).toContain("if country == nil then");
+    expect(guard).toContain("ngx.ctx.openship_country = country or false");
+    expect(guard).toContain('pcall(require, "openship.geo_country")');
+    expect(guard).toContain('cc:match("^[A-Z][A-Z]$")');
   });
 
   it("returns early when the host has no rules (the common case)", () => {
@@ -231,8 +239,8 @@ describe("rules_guard.lua keeps the properties its comments promise", () => {
   });
 
   it("applies access before ban before hotlink before rate limit", () => {
-    // Order matters for what a blocked request costs us: the cheap allow/deny checks
-    // run before geo, and the shared-dict write runs last.
+    // After resolving the country header, keep the cheaper access/ban checks
+    // before the shared-dict rate-limit write.
     const at = (needle: string) => guard.indexOf(needle);
     expect(at("local access = spec.access")).toBeLessThan(at("local ban = spec.ban"));
     expect(at("local ban = spec.ban")).toBeLessThan(at("local hot = spec.hotlink"));
