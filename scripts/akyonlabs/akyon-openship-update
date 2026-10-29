@@ -16,6 +16,8 @@ curl -fLsS --retry 3 "https://api.github.com/repos/oblien/openship/tarball/v$ver
 mkdir "$work/source"
 tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
 cd "$work/source"
+# Build inputs are public source; edge workers run without root.
+umask 022
 git apply "$state/branding.patch"
 # PR #1515 is merged upstream but not included in 0.9.5.
 patches=("$state/branding.patch")
@@ -23,11 +25,13 @@ if [[ "$version" == 0.9.5 ]]; then
   git apply "$state/visitor-country.patch"
   patches+=("$state/visitor-country.patch")
 fi
-patch_id=$(cat "${patches[@]}" | sha256sum | cut -c1-12)
+umask 077
+patch_id=$(cat "${patches[@]}" "$0" | sha256sum | cut -c1-12)
 edge_image="ghcr.io/oblien/openship-edge:$version"
 if [[ "$version" == 0.9.5 ]]; then
   edge_image="akyonlabs/openship-edge:$version-$patch_id"
   docker build --pull -f apps/edge/Dockerfile -t "$edge_image" .
+  docker run --rm --network none --user nobody --entrypoint sh "$edge_image" -c 'for file in /usr/local/openresty/site/lualib/openship/*.lua /usr/share/GeoIP/GeoLite2-Country.mmdb; do test -r "$file" || exit 1; done'
 fi
 image="akyonlabs/openship-dashboard:$version-$patch_id"
 api_image="akyonlabs/openship-api:$version-$patch_id"
