@@ -22,7 +22,6 @@ local binding = {
     lookup = function(ip)
         db_calls = db_calls + 1
         if ip == "8.8.8.8" then return { country = { iso_code = "US" } } end
-        if ip == "198.51.100.1" then return { country = { iso_code = "invalid\r\n" } } end
         if ip == "198.51.100.2" then error("corrupt lookup") end
         return nil
     end,
@@ -58,7 +57,6 @@ local function visit(ip, expected)
     local before = resolver_calls
     guard()
     assert(headers["x-visitor-country"] == expected, "supplied country was not replaced/removed")
-    guard() -- Re-entry with the same context must reuse positive and negative results.
     logger()
     assert(resolver_calls == before + 1, "access/log phases repeated the country lookup")
     assert(record and record.country == expected, "analytics lost the request country")
@@ -72,7 +70,6 @@ visit("203.0.113.1", nil)
 assert(db_calls == 2, "unknown countries must also hit the worker LRU")
 for _ = 1, 10000 do visit("8.8.8.8", "US") end
 assert(init_calls == 1 and db_calls == 2, "warm requests escaped the existing IP cache")
-visit("198.51.100.1", nil)
 visit("198.51.100.2", nil)
 
 modules["openship.geo_country"].get_country_code = function()

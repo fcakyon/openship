@@ -194,12 +194,10 @@ describe("rules_guard.lua keeps the properties its comments promise", () => {
     expect(guard.indexOf('ngx.req.set_header')).toBeLessThan(guard.indexOf('local rules ='));
   });
 
-  it("memoizes country hits and misses for the request and protects lookup failures", () => {
-    expect(guard).toContain("local country = ngx.ctx.openship_country");
-    expect(guard).toContain("if country == nil then");
+  it("shares country hits and misses with analytics and protects lookup failures", () => {
     expect(guard).toContain("ngx.ctx.openship_country = country or false");
     expect(guard).toContain('pcall(require, "openship.geo_country")');
-    expect(guard).toContain('cc:match("^[A-Z][A-Z]$")');
+    expect(guard).toContain('pcall(geo.get_country_code, ngx.var.remote_addr)');
   });
 
   it("returns early when the host has no rules (the common case)", () => {

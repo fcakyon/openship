@@ -10,18 +10,15 @@
 -- config if behind a trusted proxy. No user-supplied value is ever used as a
 -- Lua pattern or written into a response header.
 
--- Reuse the worker's IP LRU, then share both hits and misses with the log phase.
--- A missing/broken GeoIP database must not turn an ordinary app request into a 500.
-local country = ngx.ctx.openship_country
-if country == nil then
-    local geo_ok, geo = pcall(require, "openship.geo_country")
-    if geo_ok and geo and geo.get_country_code then
-        local ok_cc, cc = pcall(geo.get_country_code, ngx.var.remote_addr)
-        if ok_cc and type(cc) == "string" and cc:match("^[A-Z][A-Z]$") then country = cc end
-    end
-    ngx.ctx.openship_country = country or false
+-- GeoIP owns the worker's IP cache; share its result with rules and analytics.
+-- A lookup failure must not turn ordinary app traffic into a 500.
+local geo_ok, geo = pcall(require, "openship.geo_country")
+local country
+if geo_ok then
+    local ok_cc, cc = pcall(geo.get_country_code, ngx.var.remote_addr)
+    if ok_cc then country = cc or nil end
 end
-country = country or nil
+ngx.ctx.openship_country = country or false
 ngx.req.set_header("x-visitor-country", country)
 
 local rules = ngx.shared.rules
