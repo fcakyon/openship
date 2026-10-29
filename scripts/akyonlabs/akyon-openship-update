@@ -17,7 +17,18 @@ mkdir "$work/source"
 tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
 cd "$work/source"
 git apply "$state/branding.patch"
-patch_id=$(sha256sum "$state/branding.patch" | cut -c1-12)
+# PR #1515 is merged upstream but not included in 0.9.5.
+patches=("$state/branding.patch")
+if [[ "$version" == 0.9.5 ]]; then
+  git apply "$state/visitor-country.patch"
+  patches+=("$state/visitor-country.patch")
+fi
+patch_id=$(cat "${patches[@]}" | sha256sum | cut -c1-12)
+edge_image="ghcr.io/oblien/openship-edge:$version"
+if [[ "$version" == 0.9.5 ]]; then
+  edge_image="akyonlabs/openship-edge:$version-$patch_id"
+  docker build --pull -f apps/edge/Dockerfile -t "$edge_image" .
+fi
 image="akyonlabs/openship-dashboard:$version-$patch_id"
 api_image="akyonlabs/openship-api:$version-$patch_id"
 docker build --pull -f apps/api/Dockerfile -t "$api_image" .
@@ -36,6 +47,7 @@ backup="$state/backups/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$backup"
 cp "$compose/.env" "$compose/docker-compose.yml" "$backup/"
 if [[ -f "$state/dashboard.yml" ]]; then cp "$state/dashboard.yml" "$backup/"; fi
+docker inspect openship-edge --format '{{.Config.Image}}' > "$backup/edge-image"
 docker inspect openship-api-1 --format '{{.Config.Image}}' > "$backup/api-image"
 docker inspect openship-dashboard-1 --format '{{.Config.Image}}' > "$backup/dashboard-image"
 # A database backup accompanies every upgrade; image rollback alone cannot undo migrations.
@@ -48,12 +60,17 @@ services:
   api:
     image: $api_image
     pull_policy: never
+    environment:
+      OPENSHIP_EDGE_IMAGE: $edge_image
+  edge:
+    image: $edge_image
+    pull_policy: never
   dashboard:
     image: $image
     pull_policy: never
 EOF
 cd "$compose"
-docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --no-deps api dashboard
+docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --no-deps edge api dashboard
 for attempt in {1..30}; do
   if docker exec openship-api-1 node -e 'fetch("http://localhost:4000/api/health",{signal:AbortSignal.timeout(10000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' && curl --max-time 15 -fsS https://app.akyonlabs.com/login | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.exit(s.includes("<title>Akyon Labs</title>")?0:1))'; then
     printf 'Akyon Labs %s is live. Backup: %s\n' "$version" "$backup"
