@@ -4,6 +4,171 @@ All notable changes to Openship. Versions follow [semver](https://semver.org);
 the in-app updater surfaces critical advisories from `release-advisories.json`.
 Runtime security notices use the signed feed published from `security-advisories.json`.
 
+## Unreleased
+
+## 0.9.6
+
+Recommended update for database recovery, reliable builds and migrations, GitHub
+Actions scheduling, and managed infrastructure updates.
+
+- **Recover PGlite after a container crash** — hold a Linux kernel file lock so
+  reused PIDs cannot strand the database or admit an owner in another container.
+  Preserve conservative checks for older locks and other operating systems (#1524).
+
+- **Keep Docker build failures readable** — surface the cause before long generated
+  commands, preserve the full output in build logs, and retain Cloud recovery
+  guidance after reload. Exit 137 is reported as a killed process with possible
+  memory pressure, without claiming a confirmed out-of-memory event.
+
+- **Keep monorepo runtime images aligned with each service** — use the service's
+  framework and selected builder for its runtime instead of inheriting an
+  unrelated parent image. Fill missing builders from the stack registry, preserve
+  explicit runtime selections for unchanged apps, and use the same resolution
+  when checking whether runtime images can be refreshed.
+
+- **Add a scoped Kubernetes manifest foundation** — admit supported resources into
+  a project's namespace with ownership checks on objects, pod/job templates and
+  selectors. Validate the full change against Kubernetes before writing, reject
+  changed Job definitions, and preserve conflict checks when updating or pruning.
+  Exercise apply, update and cleanup against K3s in CI and the release gate. This
+  foundation does not yet expose a manifest upload UI or deployment route (#1039).
+
+- **Preserve live Docker logs** — decode stdout and stderr independently across
+  split frames and UTF-8 characters, keep TTY logs intact, and report malformed or
+  truncated streams so the existing reconnect flow can recover (#1482).
+
+- **Support verified self-hosted OIDC sign-in** — discover a configured identity provider and
+  verify signed ID tokens, issuer, audience, expiry and sign-in nonce before
+  creating sessions. Preserve invitation and two-factor checks, require matching
+  UserInfo subjects, and refuse insecure or redirected provider endpoints. Require
+  verified email, scope accounts to the issuer and exact subject, and keep instance
+  OIDC disabled on Openship Cloud and outside local-account auth mode (#1489).
+
+- **Keep BuildKit sessions alive** — answer Docker’s session health checks so
+  builds can use optional secret mounts after long install/build steps. Close
+  sessions on completion, cancellation, and transport errors (#1488).
+
+- **Move digest-referenced images between servers** — use the reference restored
+  by Docker load for migration's one-time deployment handover. Direct and relayed
+  transfers no longer try to create a Docker tag containing a digest (#1526).
+
+- **Move stateless single-app projects between servers** — deploy a project-owned
+  app with no service rows through its single-app pipeline using the transferred image.
+  Reject unsafe empty service scopes before copying data or stopping the source;
+  reused containers stay outside the deployment scope. Single apps with mounted
+  data remain unsupported and are refused before data movement (#1525).
+
+- **Keep queued GitHub jobs moving** — replace a registration that GitHub assigned
+  to another job, and only count spare registrations whose runners remain admitted
+  and capable for the waiting workflow. Excluded runners, stale approvals and
+  incompatible hosts no longer block dispatch (#1505, #1509, #1541).
+
+- **Keep Cloud diagnostics available during replica startup** — allow bounded
+  schema initialization to wait for another replica, while preserving the short
+  write deadlines and local-log fallback used during normal operation.
+
+- **Recover health after a service container is replaced** — refresh only the
+  stale service binding when the continuous watcher verifies a healthy successor
+  under the same active deployment. Preserve native and Compose service identity
+  through managed edge updates and rollback; leave unrelated services and
+  deployment history intact (#1496).
+
+- **Scan private repositories with server credentials** — repository preparation,
+  monorepo folder selection and branch rescans use the shared GitHub credential
+  chain, including the selected self-hosted server's saved token. Without a
+  selection, only the active organization's local server is eligible. Borrowing
+  requires repository access and server write permission; SSH provisioning,
+  GitHub mutations and Cloud authentication remain unchanged (#1500).
+
+- **Match Laravel worker suggestions to production dependencies** — suggest the
+  standard queue worker when Horizon is only in `require-dev`, matching the
+  default Composer `--no-dev` install. Explicit role choices remain available (#1171).
+
+- **Keep runtime roles available after removing attached services** — a single
+  source app retains its existing deployment and role configuration flow after
+  the last attached service is removed or disabled, preserving its service and
+  routing identity (#1308).
+
+- **Prevent false stale-role warnings after deployments** — background image
+  cleanup updates storage measurements without changing the project's configuration
+  revision. Real configuration edits still invalidate previously reviewed changes.
+
+- **OpenShip Earn** — explain the Cloud affiliate program at `/affiliates`, with
+  an interactive commission split, monthly and annual reward timing, payout
+  guidance, and a dedicated social preview. Label the dashboard affiliate entry
+  Earn with a gift-box icon in the left sidebar.
+- **Start CockroachDB services correctly** — pass the required single-node
+  command to the official image, generate an application password, and persist
+  TLS certificates alongside the existing data volume. New services keep TLS and
+  password authentication enabled; container replacement preserves both data and
+  certificates. Include recovery steps for saved services missing the command
+  (#1484).
+- **Recover storage from slow build-cache scans** — when free disk space or inodes
+  already block deployment, allow up to two minutes to measure unused, owned build
+  caches before reclaiming them. Healthy hosts retain the short best-effort scan;
+  defer timed-out SSH measurements during automatic retention without blocking
+  unrelated builds. Explicit cleanup still reports measurement failures; active
+  builders and application volumes remain protected (#1527).
+- **Reclaim images from interrupted first deployments** — include projects that
+  have never reached a running release in managed image collection. Resolve the
+  last attempt through the existing tenant checks and retain the same rollback,
+  retry, pin and in-use protections, so failed builds cannot fill the server with
+  orphaned images.
+- **Cloud affiliate program** — create and revoke referral links with optional
+  customer discounts, follow verified payments, renewals and expiry, and request
+  reviewed cash payouts. Staff can review pending requests in a private operator
+  queue and reconcile transfers, including after an account is deleted.
+  Oblien owns the ledger and atomically reserves payout
+  funds. The default minimum is $50, with trusted per-user overrides. Eligible
+  monthly and annual Cloud compute starts at $10 per month equivalent; Manage,
+  PAYG and top-ups are excluded. Program guidance lives beside the referral lists,
+  with illustrated empty states, a two-step discount and plan picker, monthly/yearly
+  eligibility enforced at checkout, encrypted manual payout accounts with immutable
+  request destinations, payment-method guidance and a screenshot
+  walkthrough in the docs. The program remains off until the provider and
+  its explicit policy grant are configured.
+- **Review shared environment edits** — preview which services inherit an edited
+  project variable, then save shared values and service overrides together. Stale
+  reviews are rejected inside the write transaction; project write access is
+  required, and saving alone does not restart applications.
+- **Clarify referral checkout and earnings** — retain unavailable referral codes
+  through sign-in until the customer removes them, and show commission per
+  confirmed payment with renewals limited to the program's reward period.
+
+- **Restore managed services after an interrupted image update** — attempt to
+  restore the previous edge or mail image when replacement startup throws,
+  including a lost SSH command channel after removal. Report unsuccessful
+  recovery instead of treating a connection failure as proof of an outage (#1540).
+- **Validate permission resource names at startup** — reject unknown permission
+  leaf types during route registration using the shared authorization validator,
+  so misspelled tags cannot reach request-time resource resolution (#1521).
+- **Load the selected app's source environment** — use the app folder's
+  `openship.json` when present and fall back to the repository root otherwise,
+  matching the configuration shown during setup (#1480).
+- **Authenticate private submodules with the selected GitHub token** — support
+  relative, HTTPS, SSH and recursive private dependencies through the shared
+  deployment credential helper, while preserving repository and namespace scope
+  and keeping credentials out of saved remote URLs (#1522).
+- **Preserve Docker restart retries and port mappings** — retain configured
+  `on-failure` retry limits and every published binding during container creation.
+- **Keep edge routes usable before a first deploy** — resolve domains through the
+  project's saved server binding, preserve the origin of password-form submissions,
+  and forward the visitor country to upstream applications. Document the scope
+  of edge password protection and direct-port access (#1498, #1515, #1506).
+- **Keep deployment source identity intact** — expose the selected revision as
+  `OPENSHIP_COMMIT_SHA`, retain carried Compose image digests, and apply configured
+  deployment paths consistently (#1499, #1475, #1472).
+- **Show the right dashboard feedback** — use custom apps' own logos, keep open
+  card menus above adjacent controls, and clarify expiring-domain notifications
+  (#1508, #1518, #1512).
+- **Retain update advisory scope** — keep installation-specific notices scoped in
+  Monitoring and recheck deployment eligibility before presenting update actions
+  (#1467).
+- **Align Cloud pricing with billing periods** — present management plans and
+  recurring compute charges using their actual billing periods (#1466).
+- **Keep desktop release builds available** — build and notarize macOS installers
+  on the supported macOS 15 runner.
+
 ## 0.9.5
 
 This hotfix restores self-hosted Compose startup after the 0.9.4 update.
