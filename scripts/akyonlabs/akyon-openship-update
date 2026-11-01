@@ -10,37 +10,19 @@ flock -n 9 || { echo 'Another update is running.' >&2; exit 1; }
 version=$(openship --json update --check | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).latest')
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 work=$(mktemp -d "$state/build.XXXXXX")
-trap 'rm -rf "$work"' EXIT
+probe="akyon-brand-check-$$"
+trap 'docker rm -f "$probe" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 printf 'Preparing Akyon Labs / OpenShip %s\n' "$version"
 curl -fLsS --retry 3 "https://api.github.com/repos/oblien/openship/tarball/v$version" -o "$work/source.tar.gz"
 mkdir "$work/source"
 tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
 cd "$work/source"
-# Build inputs are public source; edge workers run without root.
-umask 022
 git apply "$state/branding.patch"
-# PR #1515 is merged upstream but not included in 0.9.5.
-patches=("$state/branding.patch")
-if [[ "$version" == 0.9.5 ]]; then
-  git apply "$state/visitor-country.patch"
-  patches+=("$state/visitor-country.patch")
-fi
-umask 077
-patch_id=$(cat "${patches[@]}" "$0" | sha256sum | cut -c1-12)
-edge_image="ghcr.io/oblien/openship-edge:$version"
-if [[ "$version" == 0.9.5 ]]; then
-  edge_image="akyonlabs/openship-edge:$version-$patch_id"
-  docker build --pull -f apps/edge/Dockerfile -t "$edge_image" .
-  docker run --rm --network none --user nobody --entrypoint sh "$edge_image" -c 'for file in /usr/local/openresty/site/lualib/openship/*.lua /usr/share/GeoIP/GeoLite2-Country.mmdb; do test -r "$file" || exit 1; done'
-fi
+patch_id=$(sha256sum < "$state/branding.patch" | cut -c1-12)
 image="akyonlabs/openship-dashboard:$version-$patch_id"
-api_image="akyonlabs/openship-api:$version-$patch_id"
-docker build --pull -f apps/api/Dockerfile -t "$api_image" .
 docker build --pull -f apps/dashboard/Dockerfile -t "$image" .
 # Check the built dashboard before changing the running stack.
-probe="akyon-brand-check-$$"
 docker run -d --name "$probe" --network openship_default -e HOSTNAME=0.0.0.0 -e PORT=3001 -e INTERNAL_API_URL=http://api:4000 "$image" >/dev/null
-trap 'docker rm -f "$probe" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 for attempt in {1..30}; do
   if docker exec "$probe" node -e 'fetch("http://localhost:3001/login",{signal:AbortSignal.timeout(10000)}).then(async r=>{if(!r.ok || !(await r.text()).includes("<title>Akyon Labs</title>"))process.exit(1)}).catch(()=>process.exit(1))'; then break; fi
   [[ "$attempt" != 30 ]] || exit 1
@@ -51,8 +33,6 @@ backup="$state/backups/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$backup"
 cp "$compose/.env" "$compose/docker-compose.yml" "$backup/"
 if [[ -f "$state/dashboard.yml" ]]; then cp "$state/dashboard.yml" "$backup/"; fi
-docker inspect openship-edge --format '{{.Config.Image}}' > "$backup/edge-image"
-docker inspect openship-api-1 --format '{{.Config.Image}}' > "$backup/api-image"
 docker inspect openship-dashboard-1 --format '{{.Config.Image}}' > "$backup/dashboard-image"
 # A database backup accompanies every upgrade; image rollback alone cannot undo migrations.
 docker exec openship-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup/database.sql.gz"
@@ -61,22 +41,14 @@ actual=$(openship --version)
 [[ "$actual" == *"$version"* ]] || { echo "Release changed during build; rerun this command. Backup: $backup" >&2; exit 1; }
 cat > "$state/dashboard.yml" <<EOF
 services:
-  api:
-    image: $api_image
-    pull_policy: never
-    environment:
-      OPENSHIP_EDGE_IMAGE: $edge_image
-  edge:
-    image: $edge_image
-    pull_policy: never
   dashboard:
     image: $image
     pull_policy: never
 EOF
 cd "$compose"
-docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --no-deps edge api dashboard
+docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --no-deps dashboard
 for attempt in {1..30}; do
-  if docker exec openship-api-1 node -e 'fetch("http://localhost:4000/api/health",{signal:AbortSignal.timeout(10000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' && curl --max-time 15 -fsS https://app.akyonlabs.com/login | node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>process.exit(s.includes("<title>Akyon Labs</title>")?0:1))'; then
+  if [[ "$(curl --max-time 15 -fsS https://app.akyonlabs.com/login)" == *'<title>Akyon Labs</title>'* ]]; then
     printf 'Akyon Labs %s is live. Backup: %s\n' "$version" "$backup"
     exit 0
   fi
