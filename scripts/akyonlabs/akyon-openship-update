@@ -16,7 +16,7 @@ trap 'docker rm -f "$probe" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 printf 'Preparing Akyon Labs / OpenShip %s\n' "$version"
 curl -fLsS --retry 3 "https://api.github.com/repos/oblien/openship/tarball/v$version" -o "$work/source.tar.gz"
 mkdir "$work/source"
-# Public build inputs must stay readable by the edge worker.
+# Keep files created by git apply readable.
 umask 022
 tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
 cd "$work/source"
@@ -36,7 +36,7 @@ done
 docker run --rm \
   -v "$PWD/scripts/update-geoip.mjs:/geoip/scripts/update-geoip.mjs:ro" \
   -v "$PWD/apps/api/assets/geoip:/geoip/apps/api/assets/geoip" \
-  -w /geoip/apps/api node:22-alpine sh -c \
+  -w /geoip/apps/api node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d sh -c \
   'npm install --no-save --package-lock=false maxmind@5.0.6 && node /geoip/scripts/update-geoip.mjs'
 umask 077
 # Hash every patch, this wrapper and the refreshed database for all three images.
@@ -66,10 +66,12 @@ docker inspect openship-dashboard-1 --format '{{.Config.Image}}' > "$backup/dash
 # A database backup accompanies every upgrade; image rollback alone cannot undo migrations.
 docker exec openship-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup/database.sql.gz"
 # Already-current updates succeed without reconciling. Always reapply the override below.
+latest=$(openship --json update --check | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).latest')
+[[ "$latest" == "$version" ]] || { echo "Release changed during build; rerun this command. Backup: $backup" >&2; exit 1; }
 openship update
 actual=$(openship --version)
 [[ "$actual" == *"$version"* ]] || { echo "Release changed during build; rerun this command. Backup: $backup" >&2; exit 1; }
-cat > "$state/dashboard.yml" <<EOF
+cat > "$work/dashboard.yml" <<EOF
 services:
   api:
     image: $api_image
@@ -84,9 +86,11 @@ services:
     pull_policy: never
 EOF
 cd "$compose"
-docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --no-deps edge api dashboard
+docker compose -f docker-compose.yml -f "$work/dashboard.yml" up -d --wait --no-deps api dashboard
+docker compose -f docker-compose.yml -f "$work/dashboard.yml" up -d --no-deps edge
 for attempt in {1..30}; do
-  if docker exec openship-api-1 node -e 'fetch("http://localhost:4000/api/health",{signal:AbortSignal.timeout(10000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' && [[ "$(curl --max-time 15 -fsS https://app.akyonlabs.com/login)" == *'<title>Akyon Labs</title>'* ]]; then
+  if [[ "$(curl --max-time 15 -fsS https://app.akyonlabs.com/login)" == *'<title>Akyon Labs</title>'* ]]; then
+    cp "$work/dashboard.yml" "$state/dashboard.yml"
     printf 'Akyon Labs %s is live. Backup: %s\n' "$version" "$backup"
     exit 0
   fi
