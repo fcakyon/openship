@@ -21,26 +21,9 @@ umask 022
 tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
 cd "$work/source"
 git apply "$state/branding.patch"
-patches=("$state/branding.patch" "$state/auth-client-ip.patch" "$state/geoip-refresh.patch")
-for patch in "${patches[@]:1}"; do
-  if git apply --reverse --check "$patch" 2>/dev/null; then
-    printf 'Already released: %s\n' "$patch"
-  elif git apply --check "$patch"; then
-    git apply "$patch"
-  else
-    echo "Patch no longer matches release $version: $patch. Review it before updating." >&2
-    exit 1
-  fi
-done
-# Dependencies exist only in the disposable container, outside the build context.
-docker run --rm \
-  -v "$PWD/scripts/update-geoip.mjs:/geoip/scripts/update-geoip.mjs:ro" \
-  -v "$PWD/apps/api/assets/geoip:/geoip/apps/api/assets/geoip" \
-  -w /geoip/apps/api node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d sh -c \
-  'npm install --no-save --package-lock=false maxmind@5.0.6 && node /geoip/scripts/update-geoip.mjs'
 umask 077
-# Hash every patch, this wrapper and the refreshed database for all three images.
-patch_id=$(cat "${patches[@]}" "$wrapper" apps/api/assets/geoip/GeoLite2-Country.mmdb | sha256sum | cut -c1-12)
+# Hash the branding patch and this wrapper for all three images.
+patch_id=$(cat "$state/branding.patch" "$wrapper" | sha256sum | cut -c1-12)
 edge_image="akyonlabs/openship-edge:$version-$patch_id"
 api_image="akyonlabs/openship-api:$version-$patch_id"
 docker build --pull -f apps/edge/Dockerfile -t "$edge_image" .
