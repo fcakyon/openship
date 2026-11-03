@@ -61,6 +61,7 @@ services:
     pull_policy: never
     environment:
       OPENSHIP_EDGE_IMAGE: $edge_image
+      OPENSHIP_ALLOW_HOST_BIND_MOUNTS: "true"
   edge:
     image: $edge_image
     pull_policy: never
