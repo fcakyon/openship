@@ -1534,6 +1534,41 @@
       "when": 1793327200002,
       "tag": "0218_two_factor_verification",
       "breakpoints": true
+    },
+    {
+      "idx": 219,
+      "version": "7",
+      "when": 1793678400000,
+      "tag": "0219_oauth_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 220,
+      "version": "7",
+      "when": 1793714400000,
+      "tag": "0220_archive_compose_services",
+      "breakpoints": true
+    },
+    {
+      "idx": 221,
+      "version": "7",
+      "when": 1793714400001,
+      "tag": "0221_security_advisory_checks",
+      "breakpoints": true
+    },
+    {
+      "idx": 222,
+      "version": "7",
+      "when": 1793714400002,
+      "tag": "0222_host_security_advisories",
+      "breakpoints": true
+    },
+    {
+      "idx": 223,
+      "version": "7",
+      "when": 1793725200000,
+      "tag": "0223_cloud_customer_email",
+      "breakpoints": true
     }
   ]
 }

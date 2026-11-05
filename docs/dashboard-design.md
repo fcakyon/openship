@@ -110,8 +110,17 @@ Security advisories reuse those deployment actions and the existing root UpdateC
 banner. **Review affected apps** opens a shared dialog; do not repeat notices in
 project Deployments or service panels. Group evidence and actions by affected app
 inside the dialog. The compact banner names only the apps and services affected by its
-advisory, with observed runtime versions. Monitoring → Security retains active findings
-independently of banner dismissal and reuses the same review component and cached overview.
+advisory, with observed runtime versions. The banner displays the signed finding's
+severity; a High finding must not be labeled Critical. Monitoring → Security retains
+active findings independently of banner dismissal and reuses the same review component
+and cached overview.
+The banner settings menu can hide runtime security banners, including critical ones,
+for the current browser/account/workspace. Settings → Notifications restores them.
+Keep this visibility choice separate from security checks, notification delivery and
+per-project automatic-refresh consent. Operator maintenance notices stay independent.
+When the signed advisory has no patched release in the observed runtime's major,
+show the required version-change guidance and open the existing saved deployment
+configuration. Do not offer another image refresh as a fix or silently upgrade a major.
 Keep detailed guidance and automatic-update settings in disclosures; show unknown/stale
 coverage and inspection time without claiming a complete vulnerability scan.
 Reading the root banner aggregates current observations without container exec;
@@ -119,8 +128,24 @@ new/changed rules are inspected by the bounded background job.
 Automatic security refresh is an explicit, off-by-default project switch with
 its limited scope explained beside it. Keep per-channel security alert controls
 in Settings → Notifications. Runtime security checks may use cached, bounded
-version probes inside isolated containers. Keep **Check again** beside the last
+version probes inside isolated containers. Workspace owners and admins can pause
+runtime advisory checks with the separate saved setting in Settings → Notifications.
+Monitoring must show checks disabled rather than a clean result; banner visibility
+remains a separate browser preference. Pausing checks also pauses automatic security refreshes.
+Keep **Check again** beside the last
 inspection time; it refreshes evidence without deploying. Image drift checks remain receipt-based.
+Host notices share that banner and review, linking to **Servers → Runs**. Monitoring's
+Security view shows workspace-local scan state and the default-on checks policy.
+Opening either view reads cached observations; it must not execute host commands.
+Runs shows the exact reviewed package versions, interruption guidance, bounded output
+and verification outcome. Use the shared job run output viewer with persisted steps,
+resumable events and the shared terminal. A dropped log connection is a connection
+error, not a failed patch. Keep patch installation and kernel reboot as separate
+explicit reviews. Apply remains on the server and never opens project Deployments.
+Keep saved run history and logs available to server admins when host execution is
+disabled or the connection needs repair; only execution controls become unavailable.
+Failed checks retain known warnings and show stale or unavailable coverage. Reset
+pending review and run state when the account, workspace or server changes.
 The failed deployment page offers **Retry deployment** only when the server reports a retained
 completed image. It replays that attempt's saved configuration with no build or replacement image
 pull. Keep ordinary **Redeploy** available for a new build. Routing-only warnings use the existing
@@ -370,6 +395,16 @@ cancellations and unfinished attempts from success rate; count queued attempts a
 Each project retains its own history.
 Old `/deployments` links redirect to Monitoring while preserving filters.
 
+When redeploy detects changed Compose source, show a review modal with the added,
+changed, and removed service names. Configure opens the existing deployment
+wizard with the fresh source and saved settings/destination; cancel performs no
+synchronization. Show the change summary in the wizard and validate its source
+revision before deploying. Retire removed services through normal deployment
+cleanup while preserving their persistent data and deployment history.
+Deploy asks for DNS setup only for newly selected custom hostnames or a changed
+destination. Existing hostnames on the same deployed destination continue directly;
+adding only a www hostname asks for that hostname alone.
+
 Instance relocation has one entry in **Settings → Instance → Instance location**. Keep moving
 the control plane, connecting a Desktop, and backup/archive recovery distinct. Reuse the
 shared server selector and option cards for API-only versus API + dashboard. Show progress
@@ -571,7 +606,7 @@ check retryable before starting the move.
   Manage is open and disable switching while checkout is in progress. Deployment and
   server-acquisition dialogs retain their compute-only choices. The direct Manage URL
   remains available for payment returns and reuses the same view.
-- The affiliate program is labeled **Earn** in the sidebar and page heading, with
+- The referral program is labeled **Referral** in the sidebar and page heading, with
   the shared `gift` icon in the sidebar. It uses full-width tabs for links,
   customers and payout history. Keep the
   four earnings cards above the tabs. Place program terms and first-use guidance in
@@ -583,7 +618,10 @@ check retryable before starting the move.
   Keep the minimum beside available earnings. Show Request payout only for an enabled participant
   with enough available funds, opening the shared modal on demand. Public referral pages
   reuse the Cloud catalog, pricing cards and interval control; a chosen plan continues
-  through sign-in to the existing checkout with its referral intact.
+  through sign-in to the existing checkout with its referral intact. Verified referral
+  discounts lead each eligible card with the reduced price beside a struck-through
+  original. Show the discounted full annual charge and discount duration too.
+  Applying or removing a code in checkout updates these same cards.
   Link creation starts with a compact discount step, then expands to plan and billing
   interval selection with per-payment earnings. Use one card per plan with monthly and
   yearly choices inside; the whole choice is a keyboard-accessible checkbox. Keep link
@@ -614,6 +652,9 @@ check retryable before starting the move.
   on interval changes. Existing subscriptions keep their saved interval; Manage remains
   monthly. Disable interval changes during checkout and never reuse a quote from another
   interval. Do not add another product navigation or price calculator.
+  Keep referral entry in a quiet footer below the plans, using a small label,
+  the shared filled input and a secondary Apply button. Do not place a native
+  disclosure above the purchase header; keep applied terms and errors in that footer.
 - Manage uses standalone Basic and Priority pricing cards matching Cloud's card spacing,
   icons and typography. Keep the native radio selection, with a neutral filled action
   and checkmark inside each card; reserve the primary fill for checkout. Do not wrap the
@@ -689,6 +730,10 @@ check retryable before starting the move.
   Keep Pending payments inside Payments & invoices, including for unpaid servers, with
   a yellow pending count on that tab. Share one scoped read with the recovery list, refresh
   on return from hosted checkout, and remove counts only after confirmed cancellation.
+  Removing the selected unused server clears its billing URL selection and returns to
+  the new-server Plans view. A billing URL for a removed or deleting workspace recovers
+  there without checkout or automatic-purchase parameters, preserving only its organization
+  scope. Do not reselect a draft while its removal finishes.
   Cloud lists unfinished payments across the organization's servers. Connected installations
   use the same Cloud inventory, filtered to a selected server when requested, without
   creating local execution links. Preserve local aliases for explicitly linked servers
@@ -746,6 +791,8 @@ check retryable before starting the move.
   reserved RAM and retained storage. Keep checkout unavailable until customer-funded purchases are
   supported. Do not expose reseller wallet balances or call hypothetical comparisons
   recorded savings.
+- Cloud deployment plan dialogs show recovery guidance once above the picker;
+  do not repeat the restriction message in a separate callout.
 - Custom resources sit beside the preset plan choice. Keep CPU, RAM and disk controls
   with a compact monthly total, wait for a matching server quote before enabling
   checkout, and expose bundle pricing details on demand. Applying a paid resource
@@ -840,6 +887,8 @@ and supporting metadata. Match nearby page headings instead of introducing a new
 Use **Domains & routing** for sections covering domains, published ports, and internal access. Use
 **Domains** when the section only manages hostnames. Put shared UI copy in the locale dictionaries.
 Keep hints concise and explain choices where they help the user decide.
+When the Free/Custom toggle is hidden, keep domain actions such as route protection
+inline with the hostname input; do not reserve a separate row for an icon.
 Routing rules have visible sections for rewrites, redirects, response headers, and
 URL behavior. Group proxy settings into uploads, timeouts, response buffering,
 compression, headers/protocol, and upstream TLS. Use human labels and shared filled
@@ -1075,6 +1124,11 @@ Explain that these settings live in Openship and do not edit repository files.
 - Repository builds use the current project's repository and branch. Browse folders and files through the shared repository path browser; manual paths remain available if browsing fails. Show build context and Dockerfile paths relative to the repository root, with inline validation and a save-then-deploy hint.
 - Reuse the existing service create fields and deployment action. Do not label every self-hosted destination “Local Docker” or add a second build pipeline for this form.
 
+Compose service routes reuse `PublicEndpointsCard` and `WwwDomainControls` for the
+wizard and Add domain form. Edit route reuses `RoutingSettingsCard` for the
+canonical target/status. Saving a service route continues through the shared
+DNS, verification, SSL and route-apply flow; a redirect hides its unused port.
+
 ## Assistant workspace and consent
 
 Failed deployment headers and failed app setup pages offer
@@ -1259,6 +1313,9 @@ without repeating activation. Model text alone cannot create an approval control
 Tool activity uses compact, domain-specific icons and explicit running, completed,
 failed or stopped states. Open a call to inspect its result, request and returned
 data; group repeated calls and select each one inside the shared details dialog.
+Routine reads show their returned item count in that activity control. Keep lists,
+individual lookup results and empty-state explanations inside the inspector; do not
+append a resource card for every lookup to the conversation.
 Preserve native tool discovery in saved conversations, including Code Mode activity.
 When native MCP actions are present, keep their orchestration wrappers in the inspector
 instead of adding duplicate action chips. Keep every write's result visible; repeated
@@ -1268,7 +1325,7 @@ and a small workflow icon. Expand it to show the shared fixed-step summary for e
 collapse removes the previews again. Never fill the transcript with canvases from incidental
 tool calls. Keep Review flow and per-item tool details inside the expanded result.
 Show actual names, triggers, agents, response policy and notification destinations from returned
-configuration. Merge repeated observations of the same flow, retaining every call in the inspector.
+configuration. Merge repeated write receipts for the same flow, retaining every call in the inspector.
 Resolve ID-only receipts on expansion through the workspace-scoped automation API; never invent saved state from
 tool arguments. Review flow opens the regular editor and never enables or runs it.
 Show actual deployment requests with a live-progress link; a completed restart tool
@@ -1277,7 +1334,9 @@ the existing connection form inline, with the provider and bot role preselected.
 the current user's management access and the returned workspace before showing the form;
 close it on a scope change. Credentials are entered only in that form. Tool output cannot
 supply executable actions or arbitrary navigation destinations.
-Known app, server, deployment, service and repository results may show inline cards.
+Successful writes may show inline resource receipts. Keep creation and deployment
+links visible, and preserve explicit setup and approval controls. Read-only app,
+server, deployment, service and repository results open from their tool activity.
 Use returned identities to build existing OpenShip routes, never result-supplied
 URLs or commands. **Import** opens the regular deployment wizard for review; it
 does not create or deploy on click. Unknown tool output remains inspectable as data.

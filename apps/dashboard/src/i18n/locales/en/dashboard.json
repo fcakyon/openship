@@ -55,7 +55,7 @@
     }
   },
   "nav": {
-    "affiliates": "Earn",
+    "affiliates": "Referral",
     "resources": "Cloud spaces",
     "support": "Support",
     "scale": "Scale",
@@ -90,7 +90,7 @@
     },
     "workspaces": "Workspaces",
     "actions": "Actions",
-    "assistant": "AI Agents"
+    "assistant": "Agents"
   },
   "sidebar": {
     "expand": "Expand sidebar",

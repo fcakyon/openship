@@ -24,6 +24,8 @@ export {
 } from "./actions.repo";
 import { createCloudAnalyticsRepo } from "./cloud-analytics.repo";
 import { createCloudSupportRepo } from "./cloud-support.repo";
+import { createCloudCustomerEmailRepo } from "./cloud-customer-email.repo";
+export { createCloudCustomerEmailRepo, type CloudCustomerEmailRepo, type CustomerEmail, type CustomerEmailInput, type CustomerPaymentEmail } from "./cloud-customer-email.repo";
 import { createCloudWorkspaceRepo } from "./cloud-workspace.repo";
 export { createCloudWorkspaceRepo, type CloudWorkspace } from "./cloud-workspace.repo";
 export {
@@ -480,7 +482,7 @@ export function createRepositories(db: Database, encryption: ConfigurationEncryp
     assistantAutomations: createAssistantAutomationsRepo(db),
     chatApps: createChatAppsRepo(db),
     patGrant: createPersonalAccessTokenGrantRepo(db),
-    oauth: createOAuthRepo(db),
+    oauth: createOAuthRepo(db, encryption),
     backupDestination: createBackupDestinationRepo(db),
     backupPolicy: createBackupPolicyRepo(db),
     backupRun: createBackupRunRepo(db),
@@ -512,6 +514,7 @@ export function createRepositories(db: Database, encryption: ConfigurationEncryp
     billingPlanGrant: createBillingPlanGrantRepo(db),
     cloudAnalytics: createCloudAnalyticsRepo(db),
     cloudSupport: createCloudSupportRepo(db),
+    cloudCustomerEmail: createCloudCustomerEmailRepo(db),
   } as const;
 }
 

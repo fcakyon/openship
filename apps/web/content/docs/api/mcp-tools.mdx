@@ -5,7 +5,7 @@ description: Generated tool descriptions, API mappings, availability, and intent
 
 This catalog is generated from the route metadata used by MCP discovery. Run `tools/list` against your instance for its current input schemas and the tools available to your credential. See [MCP setup](/docs/mcp), [protocol and arguments](/docs/api/mcp), and the [cluster/scaling workflow](/docs/guides/mcp-clusters-and-scaling).
 
-The current API has **549 unique tools**. Permission tags below describe the route's initial authority; shared operations also enforce workspace, resource, source-access and instance-admin requirements. Self-hosted tools are unavailable on the hosted Cloud controller.
+The current API has **557 unique tools**. Permission tags below describe the route's initial authority; shared operations also enforce workspace, resource, source-access and instance-admin requirements. Self-hosted tools are unavailable on the hosted Cloud controller.
 
 ## Tools
 
@@ -86,7 +86,8 @@ The current API has **549 unique tools**. Permission tags below describe the rou
 | `get_assistant_agents`<br />`GET /api/assistant/agents` | List your saved specialist agents and their task conversations in this workspace. Agents perform specific scoped tasks and can be selected by automations. The general OpenShip assistant remains separate. Native provider credentials are never returned. | `settings:read` |
 | `get_assistant_agents_by_id`<br />`GET /api/assistant/agents/:id` | Read a specialist's saved instructions, resource scope and task history before using or editing it. | `settings:read` |
 | `get_assistant_agents_by_id_tasks_by_chatId`<br />`GET /api/assistant/agents/:id/tasks/:chatId` | Inspect one specialist task's conversation, tool activity and current state. Use this for the result; do not repeatedly poll a running task. | `settings:read` |
-| `post_assistant_agents`<br />`POST /api/assistant/agents` | Create a saved scoped specialist using the normal agent API. Set its purpose, instructions, provider/model, readOnly and concrete resource grants, all within your current access. Reuse requestId on retries. This creates no task or schedule; delegate a task or attach an automation separately. Agents cannot manage credentials, create other agents or expand their permissions. | `settings:write` |
+| `get_assistant_agents_models`<br />`GET /api/assistant/agents/models` | Discover available AI connections and exact model IDs on this user's selected assistant host before creating or editing a specialist. Choose a ready provider and use its defaultModel or a listed model ID; "" selects the connected native default. Never guess model IDs or infer that all providers are disconnected from one failed choice. Returns no credentials or private connection settings. | `settings:read` |
+| `post_assistant_agents`<br />`POST /api/assistant/agents` | Create a saved scoped specialist using the normal agent API. First read get_assistant_agents_models; select a ready provider and its defaultModel or an exact listed model ID. model="" uses the connected native default. Set purpose, instructions, readOnly and concrete resource grants within your current access. Reuse requestId on retries. This creates no task or schedule; delegate a task or attach an automation separately. Agents cannot manage credentials, create other agents or expand their permissions. | `settings:write` |
 | `post_assistant_agents_by_id_archive`<br />`POST /api/assistant/agents/:id/archive` | Archive a specialist, pause its automations and stop active tasks. Preserve its conversations for inspection. | `settings:write` |
 | `post_assistant_agents_by_id_tasks`<br />`POST /api/assistant/agents/:id/tasks` | Give this specialist a scoped task. Reuse requestId for the identical retry. Creates one task conversation and starts it through the ordinary assistant pipeline. Returns actual status and a link to inspect the conversation; acceptance is not task completion. It cannot exceed the initiating caller's access. | `settings:write` |
 | `post_assistant_agents_by_id_tasks_by_chatId_messages`<br />`POST /api/assistant/agents/:id/tasks/:chatId/messages` | Continue this specialist's task in its existing chat. While running, delivers a follow-up to the same turn; after completion starts the next turn within the same resource scope. Reuse requestId for retries. | `settings:write` |
@@ -626,6 +627,8 @@ The current API has **549 unique tools**. Permission tags below describe the rou
 | `get_system_servers_by_id_rate_limit`<br />`GET /api/system/servers/:id/rate-limit` | Read this server’s OpenResty request-rate limit, burst allowance and whitelist. | `server:read` |
 | `get_system_servers_by_id_reachability`<br />`GET /api/system/servers/:id/reachability` | Probe whether the Openship controller can reach this server now. A controller connection failure is not evidence that deployed applications are down. | `server:read` |
 | `get_system_servers_by_id_resize`<br />`GET /api/system/servers/:id/resize` | Preview applying a managed server's purchased capacity. Returns a revision and the projects that may restart; no billing or runtime changes. Review before resize. Disk shrinking requires migration. | `server:read` |
+| `get_system_servers_by_id_security`<br />`GET /api/system/servers/:id/security` | Read this customer's host advisory findings and inspection freshness. Provider-managed hosts are excluded. | `server:read` |
+| `get_system_servers_by_id_security_runs`<br />`GET /api/system/servers/:id/security/runs` | Read this server's security patch runs, bounded output and verified or reboot-required outcomes. | `server:admin` |
 | `get_system_servers_by_id_swarm`<br />`GET /api/system/servers/:id/swarm` | Inspect Docker Swarm membership on a self-hosted server. Set details=true to read stacks, service replica counts, ports, mounts and nodes from a manager. Requires server administration because inventory spans the cluster. Read-only: does not join nodes, adopt stacks or change services. Workers require a manager connection for inventory. No environment values, join tokens or credentials are returned. | `server:admin`<br />Self-hosted |
 | `get_system_servers_by_id_tunnels`<br />`GET /api/system/servers/:id/tunnels` | List saved SSH port-forwarding tunnels for this server and their current state. Tunnels run from this Openship controller, not from the MCP client. | `server:read`<br />Self-hosted |
 | `get_system_servers_by_id_usage`<br />`GET /api/system/servers/:id/usage` | Read measured CPU, memory and disk usage plus accessible projects on this server. Purchased disk is capacity, not bytes used. Unavailable measurements are null. This never provisions or resumes a server. | `server:read` |
@@ -678,6 +681,9 @@ The current API has **549 unique tools**. Permission tags below describe the rou
 | `post_system_servers_by_id_ports_scan`<br />`POST /api/system/servers/:id/ports/scan` | Inspect listening ports through this server's execution connection. Returns protocol, bound address and process without changing listeners. Managed Cloud listeners are inside the server; public access is controlled by provider networking and project routes. | `server:read` |
 | `post_system_servers_by_id_resize`<br />`POST /api/system/servers/:id/resize` | Apply a reviewed managed server resize with its preview revision, idempotency key and restart confirmation. Preserves container recovery checkpoints and waits for deployments. Poll server get for completion. | `server:admin` |
 | `post_system_servers_by_id_retry`<br />`POST /api/system/servers/:id/retry` | Retry this managed server's failed lifecycle operation. Reuses its provider identity and saved recovery checkpoint. Inspect the error first, then poll server get for progress. | `server:admin` |
+| `post_system_servers_by_id_security_apply`<br />`POST /api/system/servers/:id/security/apply` | Apply an explicitly reviewed host patch token. Revalidates the exact plan and returns a server run ID; kernel installation may still require a reboot. | `server:admin` |
+| `post_system_servers_by_id_security_check`<br />`POST /api/system/servers/:id/security/check` | Inspect this customer's Ubuntu host against signed advisory rules using bounded commands. Does not install packages. | `server:admin` |
+| `post_system_servers_by_id_security_plan`<br />`POST /api/system/servers/:id/security/plan` | Refresh package indexes and prepare an expiring host security patch plan. Review all package changes and service interruption before applying its token. | `server:admin` |
 | `post_system_servers_by_id_swarm_connect`<br />`POST /api/system/servers/:id/swarm/connect` | Connect an existing Swarm manager as a project deployment target. Verifies cluster identity without creating, joining, upgrading or adopting nodes or stacks. Requires fleet administration. | `server:admin`<br />Self-hosted |
 | `post_system_servers_by_id_tunnels`<br />`POST /api/system/servers/:id/tunnels` | Save an SSH port-forwarding tunnel configuration. Start it separately; its local bind address belongs to the Openship controller. | `server:write`<br />Self-hosted |
 | `post_system_servers_by_id_tunnels_by_tunnelId_start`<br />`POST /api/system/servers/:id/tunnels/:tunnelId/start` | Start this saved tunnel on the Openship controller and return its local address. Read the tunnel list to inspect state. | `server:write`<br />Self-hosted |
@@ -695,6 +701,7 @@ The current API has **549 unique tools**. Permission tags below describe the rou
 | `get_updates`<br />`GET /api/updates` | List update statuses for the org (apps, projects, self-app, webmail). ?behind=1 filters to those with an update available. | `updates:read` |
 | `get_updates_advisories`<br />`GET /api/updates/advisories` | Read the shared release/security feeds and authorized workspace findings from current cached observations. Does not execute container commands; respects feed polling and backoff. | `updates:read` |
 | `get_updates_by_projectId_security`<br />`GET /api/updates/:projectId/security` | Match verified security notices against deployed image receipts and bounded, isolated runtime version checks. Does not deploy. | `project:read` |
+| `get_updates_security_policy`<br />`GET /api/updates/security/policy` | Read the workspace runtime security advisory check setting and whether this account can change it. | `updates:read` |
 | `post_updates_by_projectId_apply`<br />`POST /api/updates/:projectId/apply` | Apply the available update to a project/app (force-pulls image tags, redeploys, pre-deploy backup). | `project:write` |
 | `post_updates_by_projectId_runtime`<br />`POST /api/updates/:projectId/runtime` | Refresh published runtime images and rebuild selected services at the active commit, without upgrading application code. Omit serviceIds to update the project. | `project:write` |
 | `post_updates_by_projectId_runtime_check`<br />`POST /api/updates/:projectId/runtime/check` | Check configured image tags and recorded build bases against their current registry digests. Does not deploy. | `project:read` |
@@ -702,6 +709,7 @@ The current API has **549 unique tools**. Permission tags below describe the rou
 | `post_updates_by_projectId_security_check`<br />`POST /api/updates/:projectId/security/check` | Refresh this project's isolated runtime observations and compare them with verified advisories. Does not deploy or bypass GitHub feed backoff. | `project:read` |
 | `post_updates_scan`<br />`POST /api/updates/scan` | Trigger a fresh update scan across the org's projects/apps. | `updates:write` |
 | `put_updates_by_projectId_security_policy`<br />`PUT /api/updates/:projectId/security/policy` | Opt in or out of automatic, signed, verified image security refreshes for this project. Off by default. | `project:write` |
+| `put_updates_security_policy`<br />`PUT /api/updates/security/policy` | Enable or disable runtime security advisory checks for this workspace. Only owners and admins can change this setting. | `updates:write` |
 
 ## HTTP-only routes
 
@@ -734,17 +742,17 @@ Every remaining route has an explicit boundary: browser authorization, streaming
 | `POST /api/actions/runtime/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry` | Authenticates an expiring, purpose-bound Actions job capability and rechecks the saved actor and organization; user sessions and provider keys are not accepted. |
 | `POST /api/actions/runtime/twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload` | Authenticates an expiring, purpose-bound Actions job capability and rechecks the saved actor and organization; user sessions and provider keys are not accepted. |
 | `POST /api/actions/runtime/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL` | Authenticates an expiring, purpose-bound Actions job capability and rechecks the saved actor and organization; user sessions and provider keys are not accepted. |
-| `GET /api/affiliates` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `POST /api/affiliates/enroll` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `GET /api/affiliates/offers` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `POST /api/affiliates/offers` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `POST /api/affiliates/offers/revoke` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `POST /api/affiliates/payout-destination` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `GET /api/affiliates/payouts` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `POST /api/affiliates/payouts` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `POST /api/affiliates/payouts/cancel` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `GET /api/affiliates/referrals` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
-| `GET /api/affiliates/referrals/payments` | Personal affiliate earnings and cash payout requests are managed in the Affiliates page. |
+| `GET /api/affiliates` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `POST /api/affiliates/enroll` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `GET /api/affiliates/offers` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `POST /api/affiliates/offers` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `POST /api/affiliates/offers/revoke` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `POST /api/affiliates/payout-destination` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `GET /api/affiliates/payouts` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `POST /api/affiliates/payouts` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `POST /api/affiliates/payouts/cancel` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `GET /api/affiliates/referrals` | Personal referral earnings and cash payout requests are managed in the Referral page. |
+| `GET /api/affiliates/referrals/payments` | Personal referral earnings and cash payout requests are managed in the Referral page. |
 | `GET /api/analytics/usage/stream` | SSE transport for live progress. Use the resource’s JSON status/log tools over MCP, or an authenticated HTTP client for streaming. |
 | `POST /api/assistant/automation-activation` | User approval of saved automation revisions. Agents offer the read-only activation review. |
 | `GET /api/assistant/callback` | User-session assistant controls and native agent authentication. Agents use the ordinary /api/mcp endpoint, not recursive assistant tools. |
@@ -767,6 +775,7 @@ Every remaining route has an explicit boundary: browser authorization, streaming
 | `POST /api/assistant/providers/:provider/auth` | User-session assistant controls and native agent authentication. Agents use the ordinary /api/mcp endpoint, not recursive assistant tools. |
 | `POST /api/assistant/providers/:provider/auth/step` | User-session assistant controls and native agent authentication. Agents use the ordinary /api/mcp endpoint, not recursive assistant tools. |
 | `POST /api/assistant/providers/:provider/logout` | User-session assistant controls and native agent authentication. Agents use the ordinary /api/mcp endpoint, not recursive assistant tools. |
+| `POST /api/assistant/providers/:provider/setup` | User-session assistant controls and native agent authentication. Agents use the ordinary /api/mcp endpoint, not recursive assistant tools. |
 | `GET /api/assistant/status` | User-session assistant controls and native agent authentication. Agents use the ordinary /api/mcp endpoint, not recursive assistant tools. |
 | `GET /api/auth/*` | Authentication, credential issuance or MCP transport. These modules cannot become tools. |
 | `POST /api/auth/*` | Authentication, credential issuance or MCP transport. These modules cannot become tools. |
@@ -835,6 +844,7 @@ Every remaining route has an explicit boundary: browser authorization, streaming
 | `GET /api/cloud/connect-handoff` | Internal Cloud relay or browser credential handoff. Use the authenticated project, domain, GitHub, analytics and Cloud status tools instead. |
 | `GET /api/cloud/connect-poll` | Internal Cloud relay or browser credential handoff. Use the authenticated project, domain, GitHub, analytics and Cloud status tools instead. |
 | `GET /api/cloud/desktop-handoff` | Internal Cloud relay or browser credential handoff. Use the authenticated project, domain, GitHub, analytics and Cloud status tools instead. |
+| `POST /api/cloud/device-authorize` | Internal Cloud relay or browser credential handoff. Use the authenticated project, domain, GitHub, analytics and Cloud status tools instead. |
 | `POST /api/cloud/disconnect` | Internal Cloud relay or browser credential handoff. Use the authenticated project, domain, GitHub, analytics and Cloud status tools instead. |
 | `POST /api/cloud/edge-proxy` | Internal Cloud relay or browser credential handoff. Use the authenticated project, domain, GitHub, analytics and Cloud status tools instead. |
 | `POST /api/cloud/edge-proxy/delete` | Internal Cloud relay or browser credential handoff. Use the authenticated project, domain, GitHub, analytics and Cloud status tools instead. |
@@ -1048,6 +1058,7 @@ Every remaining route has an explicit boundary: browser authorization, streaming
 | `PUT /api/system/servers/:id/github/deploy-key-mode` | Changes a deployment server’s GitHub credential mode. Configure tokens and deploy keys in the server’s GitHub settings. |
 | `POST /api/system/servers/:id/github/ssh-key` | Changes a deployment server’s GitHub credential mode. Configure tokens and deploy keys in the server’s GitHub settings. |
 | `PUT /api/system/servers/:id/github/token` | Changes a deployment server’s GitHub credential mode. Configure tokens and deploy keys in the server’s GitHub settings. |
+| `GET /api/system/servers/:id/security/runs/:runId/stream` | SSE transport for live progress. Read securityRuns for saved status and logs over MCP. |
 | `DELETE /api/system/settings` | Instance reset/recovery is an operator workflow in Settings, not a tenant automation operation. |
 | `PATCH /api/system/settings` | Instance identity and authentication settings are operator-controlled through Settings; workspace deployment preferences have dedicated MCP tools. |
 | `PUT /api/system/settings/email` | Instance-wide email identity and credentials are configured by the instance administrator in Settings. |

@@ -16,6 +16,7 @@ const host = vi.hoisted(() => ({
   proxyCalls: 0,
   forceRefreshes: 0,
   startupDelay: false,
+  proxyFailure: 0,
 }));
 vi.mock("../src/engine/modules/assistant/target-access", () => ({
   revalidateAssistantTarget: async () => host.server,
@@ -52,7 +53,15 @@ vi.mock("../src/engine/lib/cloud-workspace-host", () => ({
                     expect(headers.has("Authorization")).toBe(false);
                     expect(headers.get("X-Mindwire-Token")).toMatch(/^[a-f0-9]{64}$/);
                     if (++host.proxyCalls === 1) return new Response(null, { status: 401 });
-                    return fetch(`http://127.0.0.1:${port}${path}`, init);
+                    if (host.proxyFailure) return new Response(null, { status: host.proxyFailure });
+                    try {
+                      return await fetch(`http://127.0.0.1:${port}${path}`, init);
+                    } catch (error) {
+                      if ((error as { cause?: { code?: string } }).cause?.code !== "ECONNREFUSED")
+                        throw error;
+                      // Managed VM gateways expose a stopped loopback service as HTTP 502.
+                      return Response.json({ error: "Upstream connection refused" }, { status: 502 });
+                    }
                   },
                 }),
               };
@@ -175,6 +184,13 @@ describe.skipIf(process.env.OPENSHIP_ASSISTANT_E2E !== "1")(
           check(path);
           return readFile(path, "utf8");
         },
+        async exists(path) {
+          check(path);
+          return stat(path).then(
+            () => true,
+            () => false,
+          );
+        },
         async rename(a, b) {
           check(a);
           check(b);
@@ -204,7 +220,7 @@ describe.skipIf(process.env.OPENSHIP_ASSISTANT_E2E !== "1")(
       for (const connection of sshConnections) connection.end();
       await new Promise<void>((resolve) => server?.close(() => resolve()));
       for (const row of rows)
-        for (const purpose of ["assistant", "chat-apps"])
+        for (const purpose of ["assistant", "chat-apps", "assistant-setup"])
           await rm(`/tmp/openship-mw-${purpose}-${assistantProfileKey(row).slice(0, 20)}`, {
             recursive: true,
             force: true,
@@ -342,6 +358,100 @@ describe.skipIf(process.env.OPENSHIP_ASSISTANT_E2E !== "1")(
       expect(host.proxyCalls).toBeGreaterThan(1);
       expect(host.forceRefreshes).toBe(1);
       await expect(client.mindwire.service.updateStatus()).resolves.toMatchObject({ idle: true });
+    }, 120000);
+
+    it("recovers a stopped managed daemon when its saved endpoint returns gateway 502", async () => {
+      host.server.workspaceId = "owned-workspace";
+      const row = connection("stopped-managed-daemon");
+      rows.push(row);
+      const client = await createRemoteAssistantClient(row);
+      clients.push(client);
+      const root = join(directory, ".openship/assistants", assistantProfileKey(row));
+      const previous = JSON.parse(await readFile(join(root, "service.json"), "utf8"));
+      const workspace = await client.workspace("retained-chat");
+      await writeFile(join(workspace, "fixture.txt"), "retained");
+      const lease = await client.mindwire.service.acquireUpdate();
+      process.kill(lease.pid, "SIGTERM");
+      await vi.waitFor(async () => {
+        await expect(client.mindwire.health()).rejects.toMatchObject({ status: 502 });
+      });
+      await client.close();
+      const recovered = await createRemoteAssistantClient(row);
+      clients.push(recovered);
+      expect((await recovered.mindwire.health()).version).toBeTruthy();
+      expect(
+        await readFile(join(await recovered.workspace("retained-chat"), "fixture.txt"), "utf8"),
+      ).toBe("retained");
+      const next = JSON.parse(await readFile(join(root, "service.json"), "utf8"));
+      expect(next.token).not.toBe(previous.token);
+    }, 120000);
+
+    it.each([502, 503, 504, 409])(
+      "preserves a reachable daemon when its proxy returns HTTP %s",
+      async (status) => {
+        host.server.workspaceId = "owned-workspace";
+        const row = connection(`reachable-managed-${status}`);
+        rows.push(row);
+        const client = await createRemoteAssistantClient(row);
+        clients.push(client);
+        const path = join(
+          directory,
+          ".openship/assistants",
+          assistantProfileKey(row),
+          "service.json",
+        );
+        const before = await readFile(path, "utf8");
+        host.proxyFailure = status;
+        try {
+          await expect(createRemoteAssistantClient(row)).rejects.toThrow(
+            status === 409 ? "409" : "could not be safely updated",
+          );
+        } finally {
+          host.proxyFailure = 0;
+        }
+        expect((await client.mindwire.health()).version).toBeTruthy();
+        expect(await readFile(path, "utf8")).toBe(before);
+      },
+      120000,
+    );
+
+    it("keeps a managed CLI installation separate from scoped execution and uses the installed binary through its wrapper", async () => {
+      host.server.workspaceId = "owned-workspace";
+      const row = connection("managed-tools");
+      rows.push(row);
+      const installer = await createRemoteAssistantClient(row, "assistant-setup");
+      clients.push(installer);
+      const key = assistantProfileKey(row);
+      const installRoot = join(directory, ".openship/assistant-setup", key);
+      const cliRoot = join(installRoot, "toolchains/claude");
+      const binary = join(cliRoot, "versions/2.2.0/bin/claude");
+      await mkdir(dirname(binary), { recursive: true });
+      // A stand-in for Mindwire's selected binary: only reports capabilities,
+      // never installs a package, signs in, or calls a model.
+      await writeFile(
+        binary,
+        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.2.0"; else echo "--tools --strict-mcp-config --setting-sources --disable-slash-commands --no-chrome"; fi\n',
+        { mode: 0o700 },
+      );
+      await writeFile(join(cliRoot, "selected.json"), JSON.stringify({ version: "2.2.0" }));
+      const client = await createRemoteAssistantClient(row);
+      clients.push(client);
+      expect(client.setup).toBeTypeOf("function");
+      const probe = await client.probe("claude");
+      expect(probe).toMatchObject({ available: true, path: binary, version: "2.2.0" });
+      const executionRoot = join(directory, ".openship/assistants", key);
+      const wrapper = await readFile(join(executionRoot, "bin/claude"), "utf8");
+      expect(wrapper).toContain(binary);
+      expect(wrapper).toContain("--strict-mcp-config");
+      expect(wrapper).toContain("--tools");
+      await expect(
+        stat(join(executionRoot, "toolchains/claude/selected.json")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      const execution = JSON.parse(await readFile(join(executionRoot, "service.json"), "utf8"));
+      const installation = JSON.parse(await readFile(join(installRoot, "service.json"), "utf8"));
+      expect(execution.port).not.toBe(installation.port);
+      expect(execution.token).not.toBe(installation.token);
+      expect((await installer.mindwire.withAgent("claude-code").setupStatus()).started).toBe(false);
     }, 120000);
   },
 );

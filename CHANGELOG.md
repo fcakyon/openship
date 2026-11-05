@@ -6,6 +6,181 @@ Runtime security notices use the signed feed published from `security-advisories
 
 ## Unreleased
 
+## 0.9.10
+
+Recommended patch for Cloud assistant startup, recovery and OAuth consent
+failures in 0.9.9. Also fixes deployments, routing and restores, and includes every
+change merged into main since 0.9.9, with additional catalog applications and
+optional calendar/contact sync.
+
+### Cloud, agents and GitHub Actions
+
+- **Cloud assistant recovery** — preserve executable launcher permissions during
+  workspace uploads and recover dead assistant endpoints after checking health
+  inside the guest. Keep reachable busy daemons and existing profiles intact.
+- **Consent callbacks** — let the consent form own OAuth continuation so automatic
+  navigation cannot consume the same callback twice.
+- **Customer email senders** — use the SMTP transport's authorized sender by
+  default. Optional `SMTP_SUPPORT_FROM` and `SMTP_BILLING_FROM` aliases require
+  send-as permission on that SMTP account; aliases stay out of the Cloud relay.
+- **Referral pricing** — show referral discounts consistently in plan cards for
+  monthly and annual billing, using the existing shared pricing calculation.
+- **Pull request Actions** — verify the executed merge against the captured base
+  and head, and publish Checks on the pull request head. Preserve trusted workflow
+  selection, fork restrictions and per-attempt Check identity.
+
+### Deployments, domains and backups
+
+- **Compose reconfiguration** — retain existing DNS setup when redeploying to the
+  same destination; request setup only for new hostnames. Normalize saved endpoint
+  ports before submitting the deployment so source-review redeploys no longer fail
+  with `Expected string`.
+- **Stored image deployments** — retain stored image-only Compose services and
+  their environment when a containerized controller cannot read the original
+  local directory. Source-built services still require their build inputs.
+- **Service www redirects** — share the apex/www controls across the wizard and
+  Add domain form, and support editing existing service redirects. Preserve
+  portless redirect intent, reject missing targets and loops before service
+  writes, and commit domain API changes with their service endpoint atomically.
+- **Wildcard route rules** — enforce the configured wildcard virtual host's
+  policies when no exact-host policy exists, while preserving exact-host overrides.
+- **Volume restore safety** — finish and validate the incoming archive before
+  clearing destination contents. Failed, truncated or timed-out uploads preserve
+  existing data; temporary staging files are cleaned up on completion or failure.
+
+### Catalog, mail and dashboard
+
+- **Application catalog** — add Appwrite, Prometheus, Alertmanager, VictoriaMetrics,
+  Loki, OpenTelemetry Collector, Beszel, Listmonk and pgAdmin4, with setup guidance,
+  service icons and runtime smoke coverage.
+- **Catalog port routing** — publish Listmonk and pgAdmin4 on their own host ports
+  instead of accidentally reusing another service's port.
+- **Calendar and contacts** — add an optional Radicale template and setup guidance
+  for calendar/contact sync alongside the existing mail installation.
+- **Error details** — add a copy action to error toasts for sharing diagnostics.
+
+### Upgrade notes
+
+- Update the API, dashboard and all API replicas together. This patch adds no new
+  database migration. When upgrading from before 0.9.9, also follow that release's
+  authentication, connection and SMTP upgrade notes below.
+- Volume restores now require enough temporary disk space to stage the incoming
+  archive before extraction. Extraction after validation is not transactional.
+- Release verification retains the published 0.9.9 Compose template so the update
+  gate tests the actual previous installation, including stored data and routes.
+
+## 0.9.9
+
+Critical security update covering authentication, Cloud connection approvals,
+server isolation and encrypted email delivery. Includes all changes merged into
+main since 0.9.8, plus deployment, billing, assistant and dashboard improvements.
+
+### Security
+
+- **Authentication dependencies** — upgrade Better Auth and its plugins/adapters
+  to 1.7.15 and the Hono Node adapter to 2.1.3. Address OAuth state, proxy,
+  consent, rate-limit and static-path middleware advisories.
+- **OAuth and sign-in compatibility** — use the provider's supported APIs for
+  resources, signing, PKCE and refresh rotation. Preserve GET/POST authorization
+  parameters, silent-request validation, signed login/MFA continuation, OIDC
+  callbacks and existing MCP endpoint aliases. Register resources and token
+  issuers from trusted instance configuration, while retaining HTTP setup and
+  desktop loopback support.
+- **Cloud connection approval** — require explicit approval before connecting
+  Desktop to a Cloud account. Headless CLI connections require the code shown
+  in the terminal, bound to an expiring, single-use request and its PKCE proof.
+  Recheck the approving session against live state. Share Better Auth's cookie
+  and session handling across bridges and preserve issued bearer lifetimes.
+- **Client identity and limits** — apply auth rate limits to the client's IP,
+  using the existing trusted-proxy boundary. Normalize linked-instance IP
+  fingerprints without combining distinct IPv6 hosts.
+- **Server isolation** — resolve shared network/PID namespaces only through
+  services in the same stack; reject authored raw container references and host
+  namespaces. Restrict host bind mounts across HTTP, MCP, native SDK and background
+  deployment paths. Managed Docker repository mounts remain confined to prepared
+  project storage. Reading local source contents or environment values over HTTP
+  requires instance authority.
+- **Encrypted SMTP** — require TLS for authenticated mail delivery, including
+  verified STARTTLS on submission ports. Refuse a plaintext fallback when the
+  server cannot provide the required encryption.
+- **Umami catalog** — update the PostgreSQL image to 2.20.2 and verify the
+  catalog's configuration remains compatible.
+
+### Security advisories and host maintenance
+
+- **Reviewed host patches** — inspect supported Ubuntu hosts, review the exact
+  package changes, and apply scoped security fixes through the dashboard, CLI,
+  SDK or MCP. Verify signed advisory data, trusted package origins, current
+  permissions and server state before execution. A kernel reboot requires a
+  separate review; unsupported hosts retain manual guidance.
+- **Observable maintenance** — persist task steps and bounded logs, reconnect to
+  running jobs, and verify the resulting package/kernel state. Keep pending
+  reboots visible and expose maintenance runs from the server and Monitoring.
+- **Advisory preferences** — let workspace owners/admins pause advisory checks,
+  and save each user's banner visibility preference. Show scan freshness and
+  availability accurately, preserve upstream severity, and explain when an
+  application runtime must change before refreshing images can fix a finding.
+
+### Deployments and host support
+
+- **Compose source review** — show added, changed and removed source services
+  before redeploying. Reject a stale review, preserve saved settings when adopting
+  an older baseline, and retire removed services only after a successful cutover.
+  Preserve volumes and keep archived services available to rollback handling.
+- **Pinned Git builds** — fetch a requested commit even when it is outside the
+  cloned branch. Improve submodule preparation and credential handling across
+  local and remote build paths.
+- **Edge recovery** — preserve unreadable virtual-host configurations during
+  cleanup, and avoid identifying similarly named application containers as the
+  OpenShip edge.
+- **Arch-family hosts** — use pacman for Arch/Manjaro package preparation and
+  component version checks instead of Debian commands.
+- **Fresh GeoIP data** — refresh and validate the country database before creating
+  release tags, with a scheduled refresh workflow for ongoing updates.
+- **Release verification** — retain the published 0.9.8 Compose template for real
+  upgrade tests. Retry transient Apple ticket-validation failures while still
+  requiring a successfully validated installer before publication.
+
+### Cloud, billing and email
+
+- **Checkout recovery** — cancel unconfirmed purchases without manual cleanup,
+  and recover the billing workspace after removing a canceled checkout's server.
+  Preserve payment verification and scoped provider ownership.
+- **Provisioning escalation** — send exhausted provisioning failures to support
+  once, retaining the recovery context without duplicate escalation.
+- **Customer emails** — welcome verified Cloud signups and confirmed purchasers,
+  and send separate payment/renewal notices with scoped billing links. Queue mail
+  durably, deduplicate webhook events, recheck the recipient's verified ownership,
+  and retry delivery failures. The billing provider remains the invoice issuer.
+- **Cloud plan guidance** — update the public plan descriptions and Hobby plan
+  guidance, and make plan-selection hints more compact in the dashboard.
+
+### Assistants and dashboard
+
+- **Connected model discovery** — list models through the connected assistant
+  runtime and MCP, keeping connection setup and agent selection consistent.
+- **Agents on paid Cloud servers** — prepare and run agents on an existing paid
+  instance while preserving host access checks, profiles and sign-ins.
+- **Compact tool activity** — keep routine assistant lookups inline, with detailed
+  previews available when useful instead of expanding every tool result into a card.
+- **Domains and referrals** — simplify domain actions and plan guidance. Use
+  consistent referral wording across the dashboard and website, and place referral
+  code entry below the plan controls.
+
+### Upgrade notes
+
+- Deploy the API, dashboard and all API replicas together. The OAuth migration
+  preserves accounts and client registrations but expires legacy access/refresh
+  tokens: reconnect existing MCP clients, assistant connections and chat connectors.
+  Some older confidential clients may need to register again. Check for duplicate
+  `(provider_id, account_id)` account pairs before upgrading from Better Auth 1.6.
+- Replace authored `container:` namespace references with `service:<name>` for a
+  service in the same stack. Host bind mounts are disabled by default. Operators
+  of trusted self-hosted instances can explicitly enable
+  `OPENSHIP_ALLOW_HOST_BIND_MOUNTS=true`; Cloud host mounts remain restricted.
+- Authenticated SMTP must support verified TLS/STARTTLS. Configure a TLS-capable
+  submission endpoint if the previous endpoint only accepted plaintext delivery.
+
 ## 0.9.8
 
 Recommended patch restoring scoped agent creation and agent-backed automations
