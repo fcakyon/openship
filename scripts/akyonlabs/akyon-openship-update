@@ -37,16 +37,14 @@ docker inspect openship-api-1 --format '{{.Config.Image}}' > "$backup/api-image"
 docker inspect openship-dashboard-1 --format '{{.Config.Image}}' > "$backup/dashboard-image"
 # A database backup accompanies every upgrade; image rollback alone cannot undo migrations.
 docker exec openship-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup/database.sql.gz"
-# Already-current updates succeed without reconciling. Always reapply the override below.
+# Already-current updates succeed without reconciling, so always reconcile api, dashboard and edge below.
 latest=$(openship --json update --check | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).latest')
 [[ "$latest" == "$version" ]] || { echo "Release changed during build; rerun this command. Backup: $backup" >&2; exit 1; }
+grep -qx 'OPENSHIP_ALLOW_HOST_BIND_MOUNTS=true' "$compose/.env" || echo 'OPENSHIP_ALLOW_HOST_BIND_MOUNTS=true' >> "$compose/.env"
 openship update
 grep -qx "OPENSHIP_VERSION=$version" "$compose/.env" || { echo "The Compose stack is not on $version. Run openship up, then rerun this command. Backup: $backup" >&2; exit 1; }
 cat > "$state/dashboard.yml" <<EOF
 services:
-  api:
-    environment:
-      OPENSHIP_ALLOW_HOST_BIND_MOUNTS: "true"
   dashboard:
     image: $image
     pull_policy: never
