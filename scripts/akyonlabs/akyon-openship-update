@@ -9,27 +9,16 @@ exec 9>"$state/update.lock"
 flock -n 9 || { echo 'Another update is running.' >&2; exit 1; }
 version=$(openship --json update --check | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).latest')
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-wrapper=$(realpath "$0")
 work=$(mktemp -d "$state/build.XXXXXX")
 probe="akyon-brand-check-$$"
 trap 'docker rm -f "$probe" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 printf 'Preparing Akyon Labs / OpenShip %s\n' "$version"
 curl -fLsS --retry 3 "https://api.github.com/repos/oblien/openship/tarball/v$version" -o "$work/source.tar.gz"
 mkdir "$work/source"
-# Keep files created by git apply readable.
-umask 022
 tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
 cd "$work/source"
 git apply "$state/branding.patch"
-umask 077
-# Hash the branding patch and this wrapper for all three images.
-patch_id=$(cat "$state/branding.patch" "$wrapper" | sha256sum | cut -c1-12)
-edge_image="akyonlabs/openship-edge:$version-$patch_id"
-api_image="akyonlabs/openship-api:$version-$patch_id"
-docker build --pull -f apps/edge/Dockerfile -t "$edge_image" .
-docker run --rm --network none --user nobody --entrypoint sh "$edge_image" -c 'for file in /usr/local/openresty/site/lualib/openship/*.lua /usr/share/GeoIP/GeoLite2-Country.mmdb; do test -r "$file" || exit 1; done'
-docker build --pull -f apps/api/Dockerfile -t "$api_image" .
-image="akyonlabs/openship-dashboard:$version-$patch_id"
+image="akyonlabs/openship-dashboard:$version-$(sha256sum < "$state/branding.patch" | cut -c1-12)"
 docker build --pull -f apps/dashboard/Dockerfile -t "$image" .
 # Check the built dashboard before changing the running stack.
 docker run -d --name "$probe" --network openship_default -e HOSTNAME=0.0.0.0 -e PORT=3001 -e INTERNAL_API_URL=http://api:4000 "$image" >/dev/null
@@ -52,29 +41,21 @@ docker exec openship-postgres-1 sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB
 latest=$(openship --json update --check | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).latest')
 [[ "$latest" == "$version" ]] || { echo "Release changed during build; rerun this command. Backup: $backup" >&2; exit 1; }
 openship update
-actual=$(openship --version)
-[[ "$actual" == *"$version"* ]] || { echo "Release changed during build; rerun this command. Backup: $backup" >&2; exit 1; }
-cat > "$work/dashboard.yml" <<EOF
+grep -qx "OPENSHIP_VERSION=$version" "$compose/.env" || { echo "The Compose stack is not on $version. Run openship up, then rerun this command. Backup: $backup" >&2; exit 1; }
+cat > "$state/dashboard.yml" <<EOF
 services:
   api:
-    image: $api_image
-    pull_policy: never
     environment:
-      OPENSHIP_EDGE_IMAGE: $edge_image
       OPENSHIP_ALLOW_HOST_BIND_MOUNTS: "true"
-  edge:
-    image: $edge_image
-    pull_policy: never
   dashboard:
     image: $image
     pull_policy: never
 EOF
 cd "$compose"
-docker compose -f docker-compose.yml -f "$work/dashboard.yml" up -d --wait --no-deps api dashboard
-docker compose -f docker-compose.yml -f "$work/dashboard.yml" up -d --no-deps edge
+docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --wait --no-deps api dashboard
+docker compose -f docker-compose.yml -f "$state/dashboard.yml" up -d --no-deps edge
 for attempt in {1..30}; do
   if [[ "$(curl --max-time 15 -fsS https://app.akyonlabs.com/login)" == *'<title>Akyon Labs</title>'* ]]; then
-    cp "$work/dashboard.yml" "$state/dashboard.yml"
     printf 'Akyon Labs %s is live. Backup: %s\n' "$version" "$backup"
     exit 0
   fi
