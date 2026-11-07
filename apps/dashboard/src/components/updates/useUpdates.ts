@@ -175,7 +175,7 @@ function fetchRemote(scope: string): Promise<AdvisoryFeedResult | null> {
 
 const refreshListeners = new Set<(resourceKey: string) => void>();
 const queuedRefreshes = new Set<string>();
-function refreshConsumers(resourceKey: string) {
+export function refreshConsumers(resourceKey: string) {
   if (queuedRefreshes.has(resourceKey)) return;
   queuedRefreshes.add(resourceKey);
   queueMicrotask(() => {
@@ -230,11 +230,13 @@ const EMPTY_OVERVIEW: SecurityOverview = { projects: [], pendingProjects: 0, unk
 interface RuntimeAdvisory extends Advisory {
   projects: SecurityOverview["projects"];
   servers?: SecurityOverview["servers"];
+  manualReview?: boolean;
 }
 function runtimeNotices(overview: SecurityOverview, scope: string): RuntimeAdvisory[] {
   const notices = new Map<string, RuntimeAdvisory>();
   for (const project of overview.projects)
     for (const finding of project.findings) {
+      if (!project.feedStale && finding.refresh && finding.refresh.status !== "failed") continue;
       const id = `runtime:${scope}:${finding.id}:${finding.revision}`;
       const existing = notices.get(id);
       if (existing) {
@@ -280,6 +282,25 @@ function runtimeNotices(overview: SecurityOverview, scope: string): RuntimeAdvis
         action: { kind: "open-url", label: "Read advisory", url: finding.url },
       });
     }
+  for (const notice of notices.values()) {
+    if (
+      !notice.servers?.length &&
+      notice.projects.length &&
+      notice.projects.every((project) =>
+        project.findings.every(
+          (finding) =>
+            finding.manualReviewRequired &&
+            finding.confidence === "possible" &&
+            finding.severity === "low",
+        ),
+      )
+    ) {
+      // Preserve the upstream risk severity in evidence, but do not rank an
+      // unverified configuration review above an observed vulnerable runtime.
+      notice.severity = "info";
+      notice.manualReview = true;
+    }
+  }
   return [...notices.values()];
 }
 
@@ -483,6 +504,17 @@ export function useUpdates(): UseUpdates {
       clearInterval(timer);
     };
   }, [load, resourceKey]);
+
+  const securityUpdateRunning = securityOverview.projects.some((project) =>
+    project.findings.some((finding) => finding.refresh && finding.refresh.status !== "failed"),
+  );
+  useEffect(() => {
+    if (!securityUpdateRunning) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "hidden") refreshConsumers(resourceKey);
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [securityUpdateRunning, resourceKey]);
 
   const dismissAdvisory = useCallback(
     (id: string) => {
