@@ -1,15 +1,15 @@
 diff --git a/apps/dashboard/public/akyonlabs-favicon.svg b/apps/dashboard/public/akyonlabs-favicon.svg
 new file mode 100644
-index 000000000..547c97e0c
+index 0000000..547c97e
 --- /dev/null
 +++ b/apps/dashboard/public/akyonlabs-favicon.svg
 @@ -0,0 +1 @@
 +<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#101113"/><g transform="translate(6 13) scale(.18)" fill="#f4f4f5"><path d="M8 198 103 12h44L49 198Z M158 12h8v186h-38v-38H83l19-38h26V71Z M184 12h39v186h-39Z M235 161h51v37h-51Z"/></g></svg>
 diff --git a/apps/dashboard/src/app/layout.tsx b/apps/dashboard/src/app/layout.tsx
-index cf2c2de06..3dbb7aaeb 100644
+index b0d8914..5f087de 100644
 --- a/apps/dashboard/src/app/layout.tsx
 +++ b/apps/dashboard/src/app/layout.tsx
-@@ -61,16 +61,8 @@ export const dynamic = "force-dynamic";
+@@ -67,16 +67,8 @@ export const dynamic = "force-dynamic";
  const BASE_METADATA: Metadata = {
    description: "Manage your deployments, domains, and infrastructure.",
    icons: {
@@ -28,7 +28,7 @@ index cf2c2de06..3dbb7aaeb 100644
    manifest: "/site.webmanifest",
  };
 diff --git a/apps/dashboard/src/components/logo.tsx b/apps/dashboard/src/components/logo.tsx
-index 0c42b4e60..115c42647 100644
+index 0c42b4e..115c426 100644
 --- a/apps/dashboard/src/components/logo.tsx
 +++ b/apps/dashboard/src/components/logo.tsx
 @@ -1,13 +1,13 @@
@@ -53,7 +53,7 @@ index 0c42b4e60..115c42647 100644
    );
  }
 diff --git a/apps/dashboard/src/lib/product-view.ts b/apps/dashboard/src/lib/product-view.ts
-index c87c0310a..1db775a01 100644
+index c87c031..1db775a 100644
 --- a/apps/dashboard/src/lib/product-view.ts
 +++ b/apps/dashboard/src/lib/product-view.ts
 @@ -44,8 +44,8 @@ export function isProductView(value: unknown): value is ProductView {
