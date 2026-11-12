@@ -837,6 +837,13 @@ export interface ExecOnly {
   exec(command: string, opts?: { timeout?: number }): Promise<string>;
 }
 
+/** What {@link CommandExecutor.lstat} reports about a path. */
+export interface FileStat {
+  kind: "file" | "symlink" | "directory" | "other";
+  /** Permission bits only (`mode & 0o7777`). */
+  mode: number;
+}
+
 /**
  * Abstraction for running commands and file operations on a target machine.
  *
@@ -893,6 +900,15 @@ export interface CommandExecutor extends ExecOnly {
 
   /** Check if a file or directory exists. */
   exists(path: string): Promise<boolean>;
+
+  /**
+   * Type and permission bits of `path`, without following a symlink. `null` means
+   * the path does not exist.
+   *
+   * Optional, and best-effort where implemented: callers must treat a missing method
+   * or a rejected probe as "unknown", never as "absent".
+   */
+  lstat?(path: string): Promise<FileStat | null>;
 
   /** Create a directory (recursive). */
   mkdir(path: string): Promise<void>;
@@ -967,7 +983,7 @@ export interface CommandExecutor extends ExecOnly {
    * Run a command and return the raw stdout/stderr streams without
    * line splitting.  Enables byte-for-byte piping of command output.
    *
-   * Only available on SshExecutor - local executors do not implement this.
+   * Local execution enforces the shared Cloud-host refusal at invocation time.
    */
   rawExec?(command: string): Promise<{
     stdout: Readable;
@@ -983,7 +999,7 @@ export interface CommandExecutor extends ExecOnly {
    * rawExec (stdout) — lets a Readable move INTO a remote command byte-for-byte
    * without staging to a temp file first.
    *
-   * Only available on SshExecutor — local executors do not implement this.
+   * Local execution enforces the shared Cloud-host refusal at invocation time.
    */
   execWithInput?(
     command: string,

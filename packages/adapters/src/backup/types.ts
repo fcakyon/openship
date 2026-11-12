@@ -21,6 +21,18 @@ import type { Readable } from "node:stream";
  *  into the DB. Everything an executor or producer might need about
  *  the service is on this handle. */
 export interface ServiceHandle {
+  /** Optional external PostgreSQL source reached from this execution container.
+   * Credentials stay in memory; dumps never record this connection in metadata. */
+  postgresConnection?: {
+    host: string;
+    hostAddress: string;
+    port: number;
+    user: string;
+    password: string;
+    database: string;
+    sslMode: "require" | "verify-ca" | "verify-full";
+    channelBinding?: "disable" | "prefer" | "require";
+  };
   /** Stable source id: a service, standalone project, or mail server. */
   id: string;
   projectId: string;
@@ -389,9 +401,8 @@ export interface ProducerOpts {
 export interface RestoreOpts {
   /** Pass clearTarget through. */
   clearTarget?: boolean;
-  /** Forwarded to the executor so a cancel doesn't have to wait out the
-   *  whole extract. Producers that restore through `pipeIntoCommand` ignore
-   *  it — those writes are transactional at the engine, not the volume. */
+  /** Abort in-flight restore work. The payload's failure semantics determine
+   *  whether an interrupted write rolls back or leaves partial data. */
   signal?: AbortSignal;
 }
 
@@ -430,6 +441,13 @@ export interface ArtifactRef {
  *  `service.image` or selected explicitly in the policy. */
 export interface BackupProducer {
   readonly kind: PayloadKind;
+
+  /** Read-only native readiness gate for database exports and restore targets. */
+  waitUntilReady?(
+    service: ServiceHandle,
+    executor: BackupExecutor,
+    signal?: AbortSignal,
+  ): Promise<void>;
 
   /** True if this producer is the appropriate default for this
    *  service. Implementations regex `service.image`. Multiple
