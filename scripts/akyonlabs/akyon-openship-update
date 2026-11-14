@@ -18,6 +18,21 @@ mkdir "$work/source"
 tar -xzf "$work/source.tar.gz" --strip-components=1 -C "$work/source"
 cd "$work/source"
 git apply "$state/branding.patch"
+api_image="ghcr.io/oblien/openship-api:$version"
+runtime_source=packages/platform/src/engine/modules/actions/triggers.ts
+runtime_fix=9d629d687f1d0cdd0212b5c1c674d0b38f976aa7
+curl -fLsS --retry 3 "https://github.com/fcakyon/openship/commit/$runtime_fix.patch" -o "$work/actions.patch"
+if git apply --check --include="$runtime_source" "$work/actions.patch"; then
+  git apply --include="$runtime_source" "$work/actions.patch"
+  api_image="akyonlabs/openship-api:$version-${runtime_fix:0:12}"
+  cat > "$work/api.Dockerfile" <<EOF
+FROM ghcr.io/oblien/openship-api:$version
+COPY $runtime_source /app/$runtime_source
+EOF
+  docker build --pull -f "$work/api.Dockerfile" -t "$api_image" .
+else
+  git apply --reverse --check --include="$runtime_source" "$work/actions.patch"
+fi
 image="akyonlabs/openship-dashboard:$version-$(sha256sum < "$state/branding.patch" | cut -c1-12)"
 docker build --pull -f apps/dashboard/Dockerfile -t "$image" .
 # Check the built dashboard before changing the running stack.
@@ -45,6 +60,9 @@ openship update
 grep -qx "OPENSHIP_VERSION=$version" "$compose/.env" || { echo "The Compose stack is not on $version. Run openship up, then rerun this command. Backup: $backup" >&2; exit 1; }
 cat > "$state/dashboard.yml" <<EOF
 services:
+  api:
+    image: $api_image
+    pull_policy: never
   dashboard:
     image: $image
     pull_policy: never
