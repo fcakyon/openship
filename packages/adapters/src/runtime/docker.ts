@@ -46,7 +46,7 @@ import { pinDockerfileBaseImages } from "./docker-base-images";
 import type { BaseImageReceipt } from "@repo/core";
 import {
   DEFAULT_BUILD_CACHE_KEEP_BYTES, DOCKER_BUILD_STORAGE_COMMAND, parseBuildStorage,
-  assertBuildStorage, buildKitCacheConfig,
+  assertBuildStorage, buildKitCacheConfig, BUILD_STORAGE_GC_FREE_FRACTION,
   ensureProjectBuildCache, pruneManagedBuildCaches, touchProjectBuildCache,
   type BuildStorage,
 } from "./docker-build-cache";
@@ -145,7 +145,7 @@ import { isRuntimeNotFoundError } from "../system/errors";
 import { OPENSHIP_LABEL } from "../system/port-owner";
 import { dirOf, ensureOwnedDir } from "../system/elevated-executor";
 import { dockerConfigJsonFor, registryForImage, resolveDockerAuth } from "./docker-auth";
-import { pullWithAnonymousFallback } from "./registry-pull";
+import { pullWithAnonymousFallback, registryAccessError } from "./registry-pull";
 
 import type {
   RuntimeAdapter,
@@ -1800,6 +1800,21 @@ export class DockerRuntime implements RuntimeAdapter {
     return buildKitCacheConfig(storage, await this.configuredBuildCacheBudget());
   }
 
+  /** Routine cache accounting belongs to the scheduled sweep. Only storage
+   * pressure justifies walking idle caches on the deployment path.
+   * Called under the same host lock as worker creation and cache collection. */
+  private async checkManagedBuildStorage(executor: CommandExecutor, log?: BuildLogger): Promise<BuildStorage> {
+    const host = await this.buildCacheHostExecutor(executor);
+    let storage = parseBuildStorage(await host.exec(DOCKER_BUILD_STORAGE_COMMAND));
+    if (storage.freeBytes < Math.ceil(storage.totalBytes * BUILD_STORAGE_GC_FREE_FRACTION) || storage.freeInodes === 0) {
+      const cleaned = await this.pruneManagedBuildState(executor);
+      if (cleaned.spaceReclaimed) log?.log(`Build cache cleanup reclaimed ${cleaned.spaceReclaimed} bytes.\n`);
+      storage = parseBuildStorage(await host.exec(DOCKER_BUILD_STORAGE_COMMAND));
+    }
+    assertBuildStorage(storage);
+    return storage;
+  }
+
   /** A failed settings read falls back to the automatic budget rather than failing a build. */
   private async configuredBuildCacheBudget(): Promise<number | null> {
     try {
@@ -1926,10 +1941,7 @@ export class DockerRuntime implements RuntimeAdapter {
       signal?.throwIfAborted();
       await removeProjectBuildKitWorker(executor, config.projectId);
       await this.assertBuildCacheCommandsStopped(config.projectId);
-      const cleaned = await this.pruneManagedBuildState(executor);
-      if (cleaned.spaceReclaimed) log.log(`Build cache cleanup reclaimed ${cleaned.spaceReclaimed} bytes.\n`);
-      const storage = parseBuildStorage(await cacheHost.exec(DOCKER_BUILD_STORAGE_COMMAND));
-      assertBuildStorage(storage);
+      const storage = await this.checkManagedBuildStorage(executor, log);
       const reused = await ensureProjectBuildCache(this.docker, config.projectId);
       const configPath = `/tmp/openship-buildkit-${randomUUID()}.toml`;
       try {
@@ -1958,8 +1970,7 @@ export class DockerRuntime implements RuntimeAdapter {
     await removeProjectBuildKitWorker(executor, projectId);
     await this.assertBuildCacheCommandsStopped(projectId);
     await this.withBuildCacheLock(async () => {
-      await this.pruneManagedBuildState(executor);
-      assertBuildStorage(parseBuildStorage(await (await this.buildCacheHostExecutor(executor)).exec(DOCKER_BUILD_STORAGE_COMMAND)));
+      await this.checkManagedBuildStorage(executor);
     });
   }
 
@@ -5265,10 +5276,6 @@ OPENSHIP_BASES_PY`, { timeout: 5_000 });
     // force → skip the present-check and always pull the tag, so a moved
     // mutable tag (:latest/:1) rolls forward on an "update" deploy.
     const executor = this.connectionOptions?.executor;
-    if (executor) {
-      await this.runRemoteRegistryCommand("pull", ref, opts?.signal, opts?.logger);
-      return;
-    }
     // dockerode does not read `~/.docker/config.json` the way the CLI does, so this pull
     // went out anonymous on a `docker login`-ed host and every private-image deploy failed
     // with an unauthorized manifest fetch (#581). Resolved per pull rather than cached: a
@@ -5278,10 +5285,14 @@ OPENSHIP_BASES_PY`, { timeout: 5_000 });
     // every install shape and every target. The host config is the fallback, and only when
     // no resolver was supplied at all: an org that manages its registries in Openship
     // should not have a stray `docker login` on the box quietly override it.
-    const authconfig = this.connectionOptions?.resolveRegistryAuth
+    const authconfig = executor ? undefined : this.connectionOptions?.resolveRegistryAuth
       ? await this.connectionOptions.resolveRegistryAuth(ref)
       : await resolveDockerAuth(ref);
     try {
+      if (executor) {
+        await this.runRemoteRegistryCommand("pull", ref, opts?.signal, opts?.logger);
+        return;
+      }
       const pull = async (anonymous: boolean) => {
         opts?.signal?.throwIfAborted();
         const stream = await this.docker.pull(ref, !anonymous && authconfig ? { authconfig } : {});
@@ -5293,6 +5304,10 @@ OPENSHIP_BASES_PY`, { timeout: 5_000 });
         () => opts?.logger?.log("Registry login was rejected; retrying public image access without credentials.\n", "warn"), opts?.signal);
       else await pull(true);
     } catch (err) {
+      if (opts?.signal?.aborted) throw err;
+      const accessError = registryAccessError(ref, err);
+      if (accessError) throw accessError;
+      if (executor) throw err;
       observeCaughtError(err, "adapters/runtime/docker");
       // Name the registry and KEEP the daemon's reason. The credential we sent is
       // never echoed back in a pull error, while the reason is the only thing that

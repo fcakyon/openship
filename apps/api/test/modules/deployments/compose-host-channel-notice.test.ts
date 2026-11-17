@@ -250,7 +250,7 @@ it("deploys Cloud Compose endpoints, internal paths, generated files and contain
   const configurations: Array<Record<string, any>> = [];
   const publishRoute = vi.fn(async () => undefined);
   const pullImage = vi.fn(async () => undefined);
-  const resolveRoutingTarget = vi.fn(async (id: string, port: number) => ({ workspace: "shared-vm",
+  const resolveRoutingTarget = vi.fn(async (id: string, port: number) => ({ vm: "shared-vm",
     port: id === "web-container" ? (port === 8080 ? 30001 : 30002) : 30003 }));
   const runtime = Object.assign(Object.create(CloudDockerRuntime.prototype), {
     name: "docker", workspaceId: "shared-vm", projectId: "p1", unsupportedComposeKeys: new Set(),
@@ -314,8 +314,8 @@ it("deploys Cloud Compose endpoints, internal paths, generated files and contain
     serviceId: "svc-api", allocatedResources: { containerId: "api-container", cpuCores: 2, memoryMb: 2048 },
   }));
   expect(publishRoute).toHaveBeenCalledWith("app.opsh.io", 30001, false, expect.objectContaining({ routes: [
-    { match: { path: "/api/", type: "prefix" }, action: { kind: "proxy", workspace: "shared-vm", port: 30003 } },
-    { match: { path: "/", type: "prefix" }, action: { kind: "proxy", workspace: "shared-vm", port: 30001 } },
+    { match: { path: "/api/", type: "prefix" }, action: { kind: "proxy", vm: "shared-vm", port: 30003 } },
+    { match: { path: "/", type: "prefix" }, action: { kind: "proxy", vm: "shared-vm", port: 30001 } },
   ] }));
 });
 
@@ -1599,7 +1599,8 @@ describe("compose deploy — host channel unavailable", () => {
     expect(base.deployServiceWorkload).not.toHaveBeenCalled();
   });
 
-  it("refuses ambiguous duplicate containers before repairing or activating anything", async () => {
+  it.each([null, "server-original"])("refuses ambiguous duplicate containers on %s before repairing or activating anything", async (serverId) => {
+    h.previousDeployment.meta = { serverId };
     const base = startingRuntime();
     const liveContainer = (id: string, name: string) => ({
       id,
@@ -1665,11 +1666,18 @@ describe("compose deploy — host channel unavailable", () => {
         {
           executor: {} as CommandExecutor,
           hostPortTarget: localHostPortTarget,
+          serverId: serverId ?? undefined,
         },
       ),
-    ).rejects.toThrow(
-      /more than one container matching active service "api".*no service activation/i,
-    );
+    ).rejects.toMatchObject({
+      code: "SERVICE_CONTAINER_CONFLICT",
+      message: expect.stringMatching(/more than one container matching active service "api".*no service activation/i),
+      details: {
+        projectId: "p1", serviceId: "svc-api", serviceName: "api",
+        containerNames: ["openship-app-api-a", "openship-app-api-b"],
+        serverId, workspaceId: null,
+      },
+    });
 
     expect(h.updateServiceDeployment).not.toHaveBeenCalled();
     expect(h.allocateAndReservePinnedHostPort).not.toHaveBeenCalled();

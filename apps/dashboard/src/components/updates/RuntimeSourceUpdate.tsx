@@ -1,5 +1,6 @@
 "use client";
 
+import { DisclosureSummary } from "@/components/ui/DisclosureSummary";
 import { useEffect, useRef, useState } from "react";
 import type {
   RuntimeSource,
@@ -38,15 +39,13 @@ export function RuntimeSourceUpdate({
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
-  const scope = useCloudResourceKey();
-  // A workspace/account switch unmounts the private source and its pending review.
   return (
-    <div key={`${scope}:${projectId}:${serviceId ?? ""}`}>
+    <div>
       <Button type="button" variant="secondary" size="sm" onClick={() => setOpen(true)}>
         {t.projectSettings.sourceImageUpdate.open}
       </Button>
       {open && (
-        <SourceEditor
+        <RuntimeSourceUpdateDialog
           projectId={projectId}
           serviceId={serviceId}
           initialPath={initialPath}
@@ -54,6 +53,30 @@ export function RuntimeSourceUpdate({
         />
       )}
     </div>
+  );
+}
+
+export function RuntimeSourceUpdateDialog({
+  projectId,
+  serviceId,
+  initialPath = "Dockerfile",
+  onClose,
+}: {
+  projectId: string;
+  serviceId?: string;
+  initialPath?: string;
+  onClose: () => void;
+}) {
+  const scope = useCloudResourceKey();
+  // Every entry point resets private source and pending reviews on a scope change.
+  return (
+    <SourceEditor
+      key={`${scope}:${projectId}:${serviceId ?? ""}`}
+      projectId={projectId}
+      serviceId={serviceId}
+      initialPath={initialPath}
+      onClose={onClose}
+    />
   );
 }
 
@@ -122,27 +145,20 @@ function SourceEditor({
     setBusy(true);
     projectsApi
       .getGit(projectId)
-      .then(
-        async (git: {
-          gitProvider?: string;
-          gitOwner?: string;
-          gitRepo?: string;
-          gitBranch?: string;
-        }) => {
-          if (!current(request)) return;
-          if (git.gitProvider !== "github" || !git.gitOwner || !git.gitRepo || !git.gitBranch) {
-            setError(copy.noRepository);
-            return;
-          }
-          setRepo({ owner: git.gitOwner, repo: git.gitRepo, branch: git.gitBranch });
-          const { data } = await updatesApi.runtimeSource(projectId, {
-            path: initialPath,
-            format: /\.ya?ml$/i.test(initialPath) ? "compose" : "dockerfile",
-            ...(serviceId && { serviceId }),
-          });
-          if (current(request)) acceptSource(data);
-        },
-      )
+      .then(async (git) => {
+        if (!current(request)) return;
+        if (!git.success || git.provider !== "github" || !git.owner || !git.repo || !git.branch) {
+          setError(copy.noRepository);
+          return;
+        }
+        setRepo({ owner: git.owner, repo: git.repo, branch: git.branch });
+        const { data } = await updatesApi.runtimeSource(projectId, {
+          path: initialPath,
+          format: /\.ya?ml$/i.test(initialPath) ? "compose" : "dockerfile",
+          ...(serviceId && { serviceId }),
+        });
+        if (current(request)) acceptSource(data);
+      })
       .catch((error) => {
         // diagnostics-ignore: showError reports through getApiErrorMessage and displays recovery.
         if (current(request)) showError(error);
@@ -288,9 +304,9 @@ function SourceEditor({
                   </label>
                 </div>
                 <details>
-                  <summary className="cursor-pointer text-sm text-muted-foreground">
+                  <DisclosureSummary className="cursor-pointer text-sm text-muted-foreground">
                     {copy.browse}
-                  </summary>
+                  </DisclosureSummary>
                   <RepositoryPathBrowser
                     source={repo}
                     kind="file"

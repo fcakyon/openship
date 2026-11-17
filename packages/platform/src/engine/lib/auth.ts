@@ -1,3 +1,4 @@
+import { isImageUrl } from "@repo/core";
 import { diagnostics as errorDiagnostics } from "@repo/core/diagnostics";
 import { organizationOptions, isSaasDeployment } from "./organization-lifecycle";
 import { betterAuth, type User } from "better-auth";
@@ -17,6 +18,7 @@ import {
   resetPasswordOtpEmail,
   verifyEmailTemplate,
   verifyOtpEmailTemplate,
+  existingAccountEmail,
 } from "./email-templates";
 import { provisionUser } from "./provision-user";
 import { oidcOAuthPlugin } from "./oidc";
@@ -176,6 +178,23 @@ export const auth = betterAuth({
          configured, so a platform-mailbox instance isn't locked out by a
          transient mail-server fault mid-signup. */
     requireEmailVerification: isSaasDeployment ? true : requireEmailVerificationStrict,
+    // Better Auth deliberately returns the same response for existing addresses.
+    // Continue privately by email without adding a credential or replacing a
+    // password on an account whose ownership has not been proved.
+    onExistingUserSignUp: async ({ user }): Promise<void> => {
+      if (!user.emailVerified) {
+        await auth.api.sendVerificationOTP({
+          body: { email: user.email, type: "email-verification" },
+        });
+        return;
+      }
+      const email = existingAccountEmail(user, resolveDashboardPublicUrl());
+      if (!(await sendMail({ to: user.email, ...email }))) {
+        throw new APIError("SERVICE_UNAVAILABLE", {
+          message: "Could not send the sign-in email. Please try again.",
+        });
+      }
+    },
     sendVerificationEmail: smtpEnabled
       ? async ({ user, url }: { user: User; url: string; token: string }) => {
           const email = verifyEmailTemplate(user, url);
@@ -260,6 +279,14 @@ export const auth = betterAuth({
   /* ---------- Database hooks ---------- */
   databaseHooks: {
     user: {
+      update: {
+        before: async (user) => {
+          if (user.image === undefined) return;
+          const image = typeof user.image === "string" ? user.image.trim() || null : user.image;
+          if (image !== null && !isImageUrl(image)) throw new APIError("BAD_REQUEST", { message: "Avatar URL must be an HTTP or HTTPS URL without credentials." });
+          return { data: { ...user, image } };
+        },
+      },
       create: {
         before: async (user, ctx) => {
           const denyCreation = (message: string): never => {

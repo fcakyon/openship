@@ -1,3 +1,5 @@
+import type { ProjectEdgePagesStatus } from "@repo/contracts";
+import type { ProjectEdgePages } from "@repo/core";
 import { api } from "./client";
 import type { PrepareComposeService, PrepareProjectResponse } from "./deploy";
 import type { BranchPageResponse } from "./github";
@@ -557,6 +559,9 @@ export const projectsApi = {
     api.get<EdgeConfigReport>(endpoints.projects.edgeConfig(id)),
 
   /* ── Route rules (self-hosted edge: rate-limit / ban / allow-deny) ── */
+  getEdgePages: (id: string) => api.get<ProjectEdgePagesStatus>(`/projects/${id}/edge-pages`),
+  updateEdgePages: (id: string, config: ProjectEdgePages, expectedRevision: string) =>
+    api.put<ProjectEdgePagesStatus>(`/projects/${id}/edge-pages`, { config, expectedRevision }),
   listRouteProtection: (id: string | number) =>
     api.get<{ data: RouteProtectionStatus[] }>(`/projects/${id}/route-protection`),
   changeRouteProtection: (id: string | number, body: RouteProtectionInput) =>
@@ -613,7 +618,10 @@ export const projectsApi = {
     }>(endpoints.projects.env(id)),
 
   /** Get git settings */
-  getGit: (id: string | number) => api.get<any>(endpoints.projects.git(id)),
+  getGit: (id: string | number) =>
+    api.get<Awaited<ReturnType<ProjectControlOperations["getGitInfo"]>>>(
+      endpoints.projects.git(id),
+    ),
 
   /** Link a GitHub repo to an existing project + register webhook */
   linkRepo: (
